@@ -1,0 +1,14 @@
+---
+
+Too hot 26 26.9
+Time:  2024-07-28 13:45:52.404206
+Current state: DeviceState.ON
+Current temperature: 26.9
+Too hot temp: 26 Too cold temp: 25
+Temp delta: 0.8999999999999986
+Turn on temp: 25 Current turn on temp: 25 Temp change: False
+Fan level: ThermostatFanLevel.LOW Current fan level: ThermostatFanLevel.LOW Fan level change: False
+New state: DeviceState.OFF Current state: DeviceState.ON State change: True
+Should change: True change reason:  state
+
+---
