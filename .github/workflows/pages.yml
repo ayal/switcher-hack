@@ -1,0 +1,53 @@
+---
+name: Pages Deploy
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy-pages:
+    runs-on: ubuntu-latest
+    environment: github-pages
+    name: Build documentation site and deploy to GH-Pages
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip repository
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+
+      - name: Prepare python environment
+        run: |
+          pip install -r requirements.txt
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Cache poetry virtual environment
+        uses: actions/cache@v3
+        with:
+          path: .venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Build documentation site
+        run: |
+          make install-docs-only-deps
+          make docs-build
+
+      - name: Deploy to GH-Pages
+        uses: peaceiris/actions-gh-pages@v3.9.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          cname: aioswitcher.tomfi.info
+          commit_message: 'docs: deployed documentation site '
