@@ -143,10 +143,15 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 remote_manager = SwitcherBreezeRemoteManager()
 # python scripts/control_device.py control_thermostat          -d <DEVICE_ID> -i "<DEVICE_IP>" -r YACIFBI0 -s on -l 03 -m cool -f high -t 24
 
+key = "05"
+deviceID = "<DEVICE_ID>"
+remoteID = "YACIFBI0"
+IP = "<DEVICE_IP>"
+
 index = 0
 async def main():
     while True:
-        await control_breeze_x("<DEVICE_IP>", "<DEVICE_ID>", "04", remote_manager, "YACIFBI0")
+        await control_breeze_x(IP, deviceID, key, remote_manager, remoteID)
         await asyncio.sleep(60)
 
 if __name__ == "__main__":

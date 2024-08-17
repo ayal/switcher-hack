@@ -24,21 +24,29 @@ const device = {
 
 // wireshark filter:
 // anything that comes out of iphone:
+// find out phone ip in network, for example 10.100.102.18
 // ip.src == 10.100.102.18 or ip.dst == 10.100.102.18
 
 // anything from iphone to switcher:
 // ip.src == 10.100.102.18 and ip.dst == <DEVICE_IP>
 
 // switcher server:
-// <SWITCHER_CLOUD_IP>
-// payload fef0 2c 000305 030144ee 1b36 a7a70 2 000000000000000000 4499 c06600000000000000000000f0fe d72141ee
-// payload fef0 2c 000305 1715ebef 1b36 37050 1 000000000000000000 4d9a c06600000000000000000000f0fe 1c571e87
-// payload fef0 2c 000305 03011bf1 1b36 78ba0 2 000000000000000000 cd9a c06600000000000000000000f0fe 43eb9ad6
-
+// <SWITCHER_CLOUD_IP> port=9091
+// filter:
+// ip.src == <SWITCHER_CLOUD_IP> or ip.dst == <SWITCHER_CLOUD_IP>
+// payload fef0 2c 000305 030144ee 1b36 a7a70 2 000000 000000000000 4499 c06600000000000000000000f0fe d72141ee
+// payload fef0 2c 000305 1715ebef 1b36 37050 1 000000 000000000000 4d9a c06600000000000000000000f0fe 1c571e87
+// payload fef0 2c 000305 03011bf1 1b36 78ba0 2 000000 000000000000 cd9a c06600000000000000000000f0fe 43eb9ad6
+// payload fef0 2c 000305 01037292 1c36 61020 2 000000 <DEVICE_ID>000000 07dd c06600000000000000000000f0fe 6514ace2
 
 // from server to device:
 // payload fef0 78 000305 03011bf1 1b36 78ba0 1 000000<DEVICE_ID>000000 cd9ac 06600000000000000000000f0fe 01039805 cd9ac066004100537769746368657220427265657a655f38433031000000000000000000000000011e0002f6000104153000075941434946424930000000000000000000000000020b4472ea
 
+
+// get phone id:
+// idevice_id -l
+// start remote virtual interface:
+// rvictl -s phone_id
 
 // change ip address macosx:
 // sudo ifconfig en0 inet 10.100.102.18 netmask 255.255.255.0
