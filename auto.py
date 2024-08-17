@@ -11,6 +11,7 @@ from datetime import datetime
 from aioswitcher.api import Command, SwitcherType1Api, SwitcherType2Api
 from aioswitcher.api.remotes import SwitcherBreezeRemoteManager
 from aioswitcher.device import (
+    DeviceType,
     DeviceState,
     ThermostatFanLevel,
     ThermostatMode,
@@ -21,8 +22,11 @@ last_force_on = None
 last_force_off = None
 
 async def control_breeze_x(device_ip, device_id, device_key, remote_manager, remote_id) :
+    print("Connecting to device", device_id, "at", device_ip, "with key", device_key)
     # for connecting to a device we need its id, login key and ip address
+#    async with SwitcherType2Api(DeviceType.BREEZE, device_ip, device_id, device_key) as api:
     async with SwitcherType2Api(device_ip, device_id, device_key) as api:
+        print("Connected to device", device_id, "at", device_ip, "with key", device_key)
         # read current data from json:
         data_json = {}
         with open('webapp/static/data.json', 'r') as f:
@@ -142,7 +146,7 @@ remote_manager = SwitcherBreezeRemoteManager()
 index = 0
 async def main():
     while True:
-        await control_breeze_x("<DEVICE_IP>", "<DEVICE_ID>", "03", remote_manager, "YACIFBI0")
+        await control_breeze_x("<DEVICE_IP>", "<DEVICE_ID>", "04", remote_manager, "YACIFBI0")
         await asyncio.sleep(60)
 
 if __name__ == "__main__":

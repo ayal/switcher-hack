@@ -6,6 +6,51 @@ from typing import Any, Dict
 from pathlib import Path
 from fastapi.responses import HTMLResponse
 from fastapi import Request
+import asyncio
+import json
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from datetime import timedelta
+from pprint import PrettyPrinter
+from typing import Any, Dict, List, Union
+from binascii import hexlify, unhexlify
+from datetime import datetime
+from aioswitcher.api import Command, SwitcherType1Api, SwitcherType2Api
+from aioswitcher.api.remotes import SwitcherBreezeRemoteManager
+from aioswitcher.device import (
+    DeviceState,
+    ThermostatFanLevel,
+    ThermostatMode,
+    ThermostatSwing,
+)
+
+remote_manager = SwitcherBreezeRemoteManager()
+
+async def control_breeze_on(device_ip, device_id, device_key, remote_manager, remote_id) :
+    async with SwitcherType2Api(device_ip, device_id, device_key) as api:
+        remote = remote_manager.get_remote(remote_id)
+
+        await api.control_breeze_device(
+                    remote,
+                    DeviceState.ON,
+                    ThermostatMode.COOL,
+                    24,
+                    ThermostatFanLevel.MEDIUM,
+                    ThermostatSwing.OFF,
+                )
+
+async def control_breeze_off(device_ip, device_id, device_key, remote_manager, remote_id) :
+    async with SwitcherType2Api(device_ip, device_id, device_key) as api:
+        remote = remote_manager.get_remote(remote_id)
+
+        await api.control_breeze_device(
+                    remote,
+                    DeviceState.OFF,
+                    ThermostatMode.COOL,
+                    25,
+                    ThermostatFanLevel.LOW,
+                    ThermostatSwing.OFF,
+                )
+
 
 app = FastAPI()
 
@@ -39,6 +84,17 @@ async def read_root():
 @app.get("/data")
 async def read_data():
     return read_data_file()
+
+@app.get("/control/on")
+async def turn_on():
+    await control_breeze_on("<DEVICE_IP>", "<DEVICE_ID>", "03", remote_manager, "YACIFBI0")
+    return "ac is now on"
+
+@app.get("/control/off")
+async def turn_on():
+    await control_breeze_off("<DEVICE_IP>", "<DEVICE_ID>", "03", remote_manager, "YACIFBI0")
+    return "ac is now off"
+
 
 @app.post("/data")
 async def replace_data(new_data: Dict[str, Any]):

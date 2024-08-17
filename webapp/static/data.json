@@ -1,1 +1,1 @@
-{"is_on": true, "temperature": 28.1, "auto": true, "too_hot_temp": 28, "too_cold_temp": 27}
+{"is_on": false, "temperature": 27.5, "auto": true, "too_hot_temp": 28, "too_cold_temp": 27}
