@@ -155,7 +155,10 @@ IP = "<DEVICE_IP>"
 index = 0
 async def main():
     while True:
-        await control_breeze_x(IP, deviceID, key, remote_manager, remoteID)
+        try:
+            await control_breeze_x(IP, deviceID, key, remote_manager, remoteID)
+        except Exception as e:
+            print(f"Error: {e}")
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
