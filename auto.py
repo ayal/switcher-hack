@@ -59,15 +59,19 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         new_state = state.state
         if data_json["too_hot_temp"] < state.temperature:
-            print("Too hot", data_json["too_hot_temp"], "is hotter than", state.temperature)
+            print("Room too hot. upper limit is: ", data_json["too_hot_temp"], "current temp:", state.temperature)
             if state.state != DeviceState.ON:
                 print("Turning on!")
                 new_state = DeviceState.ON
+            else:
+                print("Leaving off")
         if data_json["too_cold_temp"] > state.temperature:
-            print("Too cold", data_json["too_cold_temp"], "is colder than", state.temperature)
+            print("Room too cold. lower limit is:", data_json["too_cold_temp"], "current temp:", state.temperature)
             if state.state != DeviceState.OFF:
                 print("Turning off!")
                 new_state = DeviceState.OFF
+            else:
+                print("Leaving off")
 
 
         fan_level_change = fan_level != state.fan_level
