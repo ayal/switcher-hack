@@ -58,11 +58,11 @@ function toggleControl() {
         this.updateData();
       },
       increment(key) {
-        this.state[key]++;
+        this.state[key]+= 0.5;
         this.updateData();
       },
       decrement(key) {
-        this.state[key]--;
+        this.state[key]-= 0.5;
         this.updateData();
       }
     }
