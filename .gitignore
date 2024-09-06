@@ -131,3 +131,8 @@ release-context.json
 .DS_Store
 
 .idea
+
+/webapp/static/data.csv
+/webapp/static/data.json
+
+nohup.out
