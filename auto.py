@@ -17,9 +17,27 @@ from aioswitcher.device import (
     ThermostatMode,
     ThermostatSwing,
 )
+import aiohttp
+import traceback
 
 last_force_on = None
 last_force_off = None
+
+async def read_temp_from_esp32():
+    url = "http://<ESP_IP>/data"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            # Ensure the response is successful
+            if response.status == 200:
+                data = await response.json()
+                # Extract temperature and humidity from the response
+                temp = float(data.get("temp"))
+                hum = float(data.get("hum"))
+                return {"temp": temp, "hum": hum}
+            else:
+                return {"error": f"Failed to retrieve data, status code: {response.status}"}
+
 
 async def control_breeze_x(device_ip, device_id, device_key, remote_manager, remote_id) :
     print("Connecting to device", device_id, "at", device_ip, "with key", device_key)
@@ -33,24 +51,36 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
             data_json = json.load(f)
 
         state = await api.get_breeze_state()
+        switcher_temp = state.temperature
+        # print("switcher temp", switcher_temp)
+
+        esp_data = await read_temp_from_esp32()
+        # print("esp data", esp_data)
+        esp_temp = esp_data["temp"]
+        # print("esp temp", esp_temp)
+
+        # esp is more accurate?
+        the_temp = esp_temp
+        
+
         remote = remote_manager.get_remote(remote_id)
 
         # sometimes the device state is wrong so we need to force the device to turn on or off if temperature is too high or too low
         # only force if last force was more than 15 minutes ago
-        # force_on = data_json["too_hot_temp"] + 1 < state.temperature
-        # force_off = state.temperature < data_json["too_cold_temp"] - 1
-        turn_on_temp =  data_json["too_cold_temp"]
-        if turn_on_temp > 25:
-            turn_on_temp = 25
+        # force_on = data_json["too_hot_temp"] + 1 < the_temp
+        # force_off = the_temp < data_json["too_cold_temp"] - 1
+        turn_on_ac_temp =  round(data_json["too_cold_temp"])
+        if turn_on_ac_temp > 25:
+            turn_on_ac_temp = 25
 
-        very_hot_delta = state.temperature - data_json["too_hot_temp"]
+        very_hot_delta = the_temp - data_json["too_hot_temp"]
         fan_level = ThermostatFanLevel.LOW
         if very_hot_delta > 1:
             fan_level = ThermostatFanLevel.MEDIUM
-            turn_on_temp -= 1
+            turn_on_ac_temp -= 1
         if very_hot_delta > 2:
             fan_level = ThermostatFanLevel.HIGH
-            turn_on_temp -= 1
+            turn_on_ac_temp -= 1
         if very_hot_delta < 0:
             fan_level = ThermostatFanLevel.LOW
 
@@ -58,15 +88,15 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         print("\n---\n")
 
         new_state = state.state
-        if data_json["too_hot_temp"] < state.temperature:
-            print("Room too hot. upper limit is: ", data_json["too_hot_temp"], "current temp:", state.temperature)
+        if data_json["too_hot_temp"] < the_temp:
+            print("Room too hot. upper limit is: ", data_json["too_hot_temp"], "current temp:", the_temp)
             if state.state != DeviceState.ON:
                 print("Turning on!")
                 new_state = DeviceState.ON
             else:
                 print("Leaving off")
-        if data_json["too_cold_temp"] > state.temperature:
-            print("Room too cold. lower limit is:", data_json["too_cold_temp"], "current temp:", state.temperature)
+        if data_json["too_cold_temp"] > the_temp:
+            print("Room too cold. lower limit is:", data_json["too_cold_temp"], "current temp:", the_temp)
             if state.state != DeviceState.OFF:
                 print("Turning off!")
                 new_state = DeviceState.OFF
@@ -75,20 +105,22 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
 
         fan_level_change = fan_level != state.fan_level
-        temp_change = turn_on_temp != state.target_temperature
+        ac_temp_change = turn_on_ac_temp != state.target_temperature
         state_change = new_state != state.state
         off_to_off = state.state == DeviceState.OFF and new_state == DeviceState.OFF
 
-        should_change = ((fan_level_change or temp_change or state_change) and not off_to_off)
-        change_reason = "fan level" if fan_level_change else "temp" if temp_change else "state" if state_change else "none"
+        should_change = ((fan_level_change or ac_temp_change or state_change) and not off_to_off)
+        change_reason = "fan level" if fan_level_change else "temp" if ac_temp_change else "state" if state_change else "none"
 
         print("Time: ", datetime.now())
         print(f"Current state: {state.state}")
         print(f"Current fan level: {state.fan_level}")
-        print(f"Current temp: {state.temperature}")
+        print(f"Current switcher temp: {switcher_temp}")
+        print(f"Current ESP32 temp: {esp_temp}")
+        print(f"Using temp: {the_temp}")
         print(f"Too hot temp: {data_json['too_hot_temp']}", f"Too cold temp: {data_json['too_cold_temp']}")
         print(f"Temp delta: {very_hot_delta}")
-        print(f"Turn on temp: {turn_on_temp}", f"Temp change: {temp_change}", f"from {state.target_temperature} to {turn_on_temp}" if temp_change else "")
+        print(f"Turn on AC with temp: {turn_on_ac_temp}", f"Temp change: {ac_temp_change}", f"from AC temp {state.target_temperature} to AC temp {turn_on_ac_temp}" if ac_temp_change else "")
         print(f"Fan level: {fan_level}", f"Fan level change: {fan_level_change}")
         print(f"New state: {new_state}", f"State change: {state_change}")
         print(f"Off to off: {off_to_off}")
@@ -100,11 +132,11 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         with open('webapp/static/data.csv', 'a') as f:
             # append one row to the csv file
-            f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {state.temperature}\n')
+            f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {the_temp}\n')
 
         # write to data.json the current state:
         data_json["is_on"] = state.state == DeviceState.ON
-        data_json["temperature"] = state.temperature
+        data_json["temperature"] = the_temp
         with open('webapp/static/data.json', 'w') as f:
             json.dump(data_json, f)
 
@@ -118,12 +150,14 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
                     remote,
                     new_state,
                     ThermostatMode.COOL,
-                    turn_on_temp,
+                    turn_on_ac_temp,
                     fan_level,
                     ThermostatSwing.OFF,
                 )
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error controlling breeze: {str(e)}")
+                print(f"Type of exception: {type(e)}")
+                traceback.print_exc()
 
         # sleep for 5 seconds to allow the device to process the command
         await asyncio.sleep(5)
@@ -133,11 +167,11 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         thedatetime = datetime.now()
         with open('webapp/static/data.csv', 'a') as f:
             # append one row to the csv file
-            f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {state.temperature}\n')
+            f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {the_temp}\n')
 
         # write to data.json the current state:
         data_json["is_on"] = state.state == DeviceState.ON
-        data_json["temperature"] = state.temperature
+        data_json["temperature"] = the_temp
         with open('webapp/static/data.json', 'w') as f:
             json.dump(data_json, f)
 
@@ -159,7 +193,7 @@ async def main():
         try:
             await control_breeze_x(IP, deviceID, key, remote_manager, remoteID)
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"General Error: {str(e)}")
         await asyncio.sleep(60)
 
 

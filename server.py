@@ -81,6 +81,12 @@ async def read_root():
     with open("webapp/index.html") as file:
         return file.read()
 
+@app.get("/autolog", response_class=HTMLResponse)
+async def read_root():
+    with open("auto-log.log") as file:
+        log_content = file.read()
+        return f"<pre>{log_content}</pre>"
+
 @app.get("/data")
 async def read_data():
     return read_data_file()
