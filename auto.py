@@ -46,9 +46,15 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
     async with SwitcherType2Api(device_ip, device_id, device_key) as api:
         print("Connected to device", device_id, "at", device_ip, "with key", device_key)
         # read current data from json:
-        data_json = {}
-        with open('webapp/static/data.json', 'r') as f:
-            data_json = json.load(f)
+        data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25}
+
+        try:
+            with open('webapp/static/data.json', 'r') as f:
+                data_json = json.load(f)
+        except Exception as e:
+            print('error reading data file', e, '\n\nRESETTING DATA FILE')
+            with open('webapp/static/data.json', 'w') as f:
+                json.dump(data_json, f)
 
         state = await api.get_breeze_state()
         switcher_temp = state.temperature
@@ -137,6 +143,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         # write to data.json the current state:
         data_json["is_on"] = state.state == DeviceState.ON
         data_json["temperature"] = the_temp
+        data_json["ac_temp"] = state.target_temperature
         with open('webapp/static/data.json', 'w') as f:
             json.dump(data_json, f)
 
