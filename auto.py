@@ -20,12 +20,11 @@ from aioswitcher.device import (
 import aiohttp
 import traceback
 
-last_force_on = None
-last_force_off = None
+FORCE_CHANGE_DELTA = 1
 
 async def read_temp_from_esp32():
     url = "http://<ESP_IP>/data"
-    
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             # Ensure the response is successful
@@ -67,48 +66,66 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         # esp is more accurate?
         the_temp = esp_temp
-        
+
 
         remote = remote_manager.get_remote(remote_id)
 
-        # sometimes the device state is wrong so we need to force the device to turn on or off if temperature is too high or too low
-        # only force if last force was more than 15 minutes ago
-        # force_on = data_json["too_hot_temp"] + 1 < the_temp
-        # force_off = the_temp < data_json["too_cold_temp"] - 1
         turn_on_ac_temp =  round(data_json["too_cold_temp"])
         if turn_on_ac_temp > 25:
             turn_on_ac_temp = 25
 
-        very_hot_delta = the_temp - data_json["too_hot_temp"]
+        hot_temp_delta = the_temp - data_json["too_hot_temp"]
+        cold_temp_delta = data_json["too_cold_temp"] - the_temp
+
         fan_level = ThermostatFanLevel.LOW
-        if very_hot_delta > 1:
+        if hot_temp_delta > 1:
             fan_level = ThermostatFanLevel.MEDIUM
             turn_on_ac_temp -= 1
-        if very_hot_delta > 2:
+        if hot_temp_delta > 2:
             fan_level = ThermostatFanLevel.HIGH
             turn_on_ac_temp -= 1
-        if very_hot_delta < 0:
+        if hot_temp_delta < 0:
             fan_level = ThermostatFanLevel.LOW
 
+        room_too_hot = the_temp > data_json["too_hot_temp"]
+        room_too_cold = the_temp < data_json["too_cold_temp"]
 
         print("\n---\n")
 
+        # sometimes the device state is wrong so we need to force the device to turn on or off if temperature is too high or too low
+        force_state = None
+        # force state on or off according to an irregular hot_temp_delta or cold_temp_delta (more than FORCE_CHANGE_DELTA)
+        if data_json.get("auto", False) == True and (room_too_hot or room_too_cold):
+            if hot_temp_delta > FORCE_CHANGE_DELTA:
+                force_state = DeviceState.ON
+            if cold_temp_delta > FORCE_CHANGE_DELTA:
+                force_state = DeviceState.OFF
+
+        if force_state is not None:
+            print("*** Forcing state change - room is >>>", "TOO HOT" if room_too_hot else "TOO COLD", "<<< ***")
+
+        device_is_on = state.state == DeviceState.ON
+        device_is_off = state.state == DeviceState.OFF
+
         new_state = state.state
-        if data_json["too_hot_temp"] < the_temp:
+        if room_too_hot:
             print("Room too hot. upper limit is: ", data_json["too_hot_temp"], "current temp:", the_temp)
-            if state.state != DeviceState.ON:
-                print("Turning on!")
+            if device_is_off:
+                print("device is off, should turn on")
                 new_state = DeviceState.ON
             else:
-                print("Leaving off")
-        if data_json["too_cold_temp"] > the_temp:
+                print("device is on, should leave on?")
+        if room_too_cold:
             print("Room too cold. lower limit is:", data_json["too_cold_temp"], "current temp:", the_temp)
-            if state.state != DeviceState.OFF:
-                print("Turning off!")
+            if device_is_on:
+                print("device is on, should turn off")
                 new_state = DeviceState.OFF
             else:
-                print("Leaving off")
+                print("device is off, should leave off?")
 
+        if force_state is not None:
+            print("*** FORCING DEVICE STATE", force_state, "***")
+            new_state = force_state
 
         fan_level_change = fan_level != state.fan_level
         ac_temp_change = turn_on_ac_temp != state.target_temperature
@@ -116,7 +133,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         off_to_off = state.state == DeviceState.OFF and new_state == DeviceState.OFF
 
         should_change = ((fan_level_change or ac_temp_change or state_change) and not off_to_off)
-        change_reason = "fan level" if fan_level_change else "temp" if ac_temp_change else "state" if state_change else "none"
+        change_reason = "fan-level" if fan_level_change else "temp" if ac_temp_change else "state" if state_change else "none"
 
         print("Time: ", datetime.now())
         print(f"Current state: {state.state}")
@@ -124,8 +141,8 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         print(f"Current switcher temp: {switcher_temp}")
         print(f"Current ESP32 temp: {esp_temp}")
         print(f"Using temp: {the_temp}")
-        print(f"Too hot temp: {data_json['too_hot_temp']}", f"Too cold temp: {data_json['too_cold_temp']}")
-        print(f"Temp delta: {very_hot_delta}")
+        print(f"UPPER LIMIT: {data_json['too_hot_temp']}", f"LOWER LIMIT: {data_json['too_cold_temp']}")
+        print(f"Hot temp delta: {hot_temp_delta}", f"Cold temp delta: {cold_temp_delta}")
         print(f"Turn on AC with temp: {turn_on_ac_temp}", f"Temp change: {ac_temp_change}", f"from AC temp {state.target_temperature} to AC temp {turn_on_ac_temp}" if ac_temp_change else "")
         print(f"Fan level: {fan_level}", f"Fan level change: {fan_level_change}")
         print(f"New state: {new_state}", f"State change: {state_change}")
@@ -148,7 +165,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
             json.dump(data_json, f)
 
         if data_json.get("auto", False) == False:
-            print("\n\nAuto mode is off\n\n")
+            print("\n\n----- Auto mode is off. Not changing anything. -----\n\n")
             return
 
         if should_change:
