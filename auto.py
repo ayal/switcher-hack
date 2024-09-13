@@ -76,10 +76,10 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         # round 2nd decimal place
         hot_temp_delta = the_temp - data_json["too_hot_temp"]
-        hot_temp_delta = round(hot_temp_delta, 2)
+        hot_temp_delta = round(hot_temp_delta, 3)
 
         cold_temp_delta = data_json["too_cold_temp"] - the_temp
-        cold_temp_delta = round(cold_temp_delta, 2)
+        cold_temp_delta = round(cold_temp_delta, 3)
 
         fan_level = ThermostatFanLevel.LOW
         if hot_temp_delta > 1:
