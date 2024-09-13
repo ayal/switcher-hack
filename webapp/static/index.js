@@ -22,67 +22,73 @@ const loadJSONFile = async (file) => {
 
 function toggleControl() {
     return {
-      state: {
-        is_on: false,
-        auto: false,
-        temperature: 20
-      },
-      init() {
-        this.fetchData();
-        setInterval(() => this.fetchData(), 5000);
-      },
-      async fetchData() {
-        try {
-          const response = await fetch('/static/data.json');
-          const data = await response.json();
-          this.state = data;
-        } catch (error) {
-          console.error('Error fetching data:', error);
+        state: {
+            is_on: false,
+            auto: false,
+            temperature: 20
+        },
+        init() {
+            this.fetchData();
+            setInterval(() => this.fetchData(), 5000);
+        },
+        async fetchData() {
+            try {
+                const response = await fetch('/static/data.json');
+                const data = await response.json();
+                this.state = data;
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        },
+        async updateData() {
+            try {
+                await fetch('/data', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(this.state),
+                });
+            } catch (error) {
+                console.error('Error updating data:', error);
+            }
+        },
+        toggle(key) {
+            this.state[key] = !this.state[key];
+            this.updateData();
+        },
+        increment(key) {
+            this.state[key] += 0.5;
+            this.updateData();
+        },
+        decrement(key) {
+            this.state[key] -= 0.5;
+            this.updateData();
         }
-      },
-      async updateData() {
-        try {
-          await fetch('/data', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(this.state),
-          });
-        } catch (error) {
-          console.error('Error updating data:', error);
-        }
-      },
-      toggle(key) {
-        this.state[key] = !this.state[key];
-        this.updateData();
-      },
-      increment(key) {
-        this.state[key]+= 0.5;
-        this.updateData();
-      },
-      decrement(key) {
-        this.state[key]-= 0.5;
-        this.updateData();
-      }
     }
-  }
+}
 
 function formatDate(date, locale = 'he-IL') {
-    const day = new Intl.DateTimeFormat(locale, { day: '2-digit' }).format(date);
-    const month = new Intl.DateTimeFormat(locale, { month: '2-digit' }).format(date);
-    const year = new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(date);
+    try {
+        const day = new Intl.DateTimeFormat(locale, { day: '2-digit' }).format(date);
+        const month = new Intl.DateTimeFormat(locale, { month: '2-digit' }).format(date);
+        const year = new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(date);
 
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
 
-    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+        return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+    }
+    catch (e) {
+        console.error('Error formatting date', e);
+        return date;
+    }
 }
 
 const fetchData = async () => {
     const csv = await loadCSVFile('static/data.csv?_t=' + Date.now());
-    
+
     const lines = csv.split('\n');
     // console.log(`Lines: ${lines.length}`);
     const headers = lines[0].split(',');
@@ -189,7 +195,7 @@ const renderChart = async () => {
             type: 'scatter',
             data: dataForChart,
             options: {
-                 maintainAspectRatio: false,
+                maintainAspectRatio: false,
                 // maintainAspectRatio: isSmallScreen ? false : true,
                 responsive: true,
                 scales: !isLandscpe ? scales : { x: scales.y, y: scales.x },

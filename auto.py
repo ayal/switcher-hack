@@ -92,20 +92,23 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         print("\n---\n")
 
-        # sometimes the device state is wrong so we need to force the device to turn on or off if temperature is too high or too low
+        device_is_on = state.state == DeviceState.ON
+        device_is_off = state.state == DeviceState.OFF
+
+
+        # sometimes the device state is WRONG (i.e it says it's on but it's not really on)
+        # so we need to force the device to turn on or off if temperature is way too hot or cold
         force_state = None
         # force state on or off according to an irregular hot_temp_delta or cold_temp_delta (more than FORCE_CHANGE_DELTA)
-        if data_json.get("auto", False) == True and (room_too_hot or room_too_cold):
-            if hot_temp_delta > FORCE_CHANGE_DELTA:
+        if data_json.get("auto", False) == True:
+            if room_too_hot and hot_temp_delta > FORCE_CHANGE_DELTA and device_is_on:
                 force_state = DeviceState.ON
-            if cold_temp_delta > FORCE_CHANGE_DELTA:
+            if room_too_cold and cold_temp_delta > FORCE_CHANGE_DELTA and device_is_off:
                 force_state = DeviceState.OFF
 
         if force_state is not None:
             print("*** Forcing state change - room is >>>", "TOO HOT" if room_too_hot else "TOO COLD", "<<< ***")
 
-        device_is_on = state.state == DeviceState.ON
-        device_is_off = state.state == DeviceState.OFF
 
         new_state = state.state
         if room_too_hot:
