@@ -74,8 +74,12 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         if turn_on_ac_temp > 25:
             turn_on_ac_temp = 25
 
+        # round 2nd decimal place
         hot_temp_delta = the_temp - data_json["too_hot_temp"]
+        hot_temp_delta = round(hot_temp_delta, 2)
+
         cold_temp_delta = data_json["too_cold_temp"] - the_temp
+        cold_temp_delta = round(cold_temp_delta, 2)
 
         fan_level = ThermostatFanLevel.LOW
         if hot_temp_delta > 1:
@@ -139,6 +143,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         change_reason = "fan-level" if fan_level_change else "temp" if ac_temp_change else "state" if state_change else "none"
 
         print("Time: ", datetime.now())
+        print("AUTO MODE: ", data_json.get("auto", False))
         print(f"Current state: {state.state}")
         print(f"Current fan level: {state.fan_level}")
         print(f"Current switcher temp: {switcher_temp}")
