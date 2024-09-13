@@ -70,7 +70,8 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         remote = remote_manager.get_remote(remote_id)
 
-        turn_on_ac_temp =  round(data_json["too_cold_temp"])
+        # avg between the two limits, rounded to full number
+        turn_on_ac_temp =  round((data_json["too_hot_temp"] + data_json["too_cold_temp"]) / 2)
         if turn_on_ac_temp > 25:
             turn_on_ac_temp = 25
 
