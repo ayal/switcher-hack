@@ -91,7 +91,7 @@ const fetchData = async () => {
 
     const lines = csv.split('\n');
     // console.log(`Lines: ${lines.length}`);
-    const headers = lines[0].split(',');
+    const headers = ['time', 'is_on', 'temperature'];
     let objs = [];
 
     // headers are: time (iso string), is_on (True, False), temperature (float
@@ -128,6 +128,7 @@ const renderChart = async () => {
     let objs = await fetchData();
 
     console.log('data-point-length-', objs.length, 'innerWidth', window.innerWidth, isBigScreen);
+    console.log('sample 3 records', objs.slice(-3));
     // console.log(objs)
     // take only the last 100 records:
     objs = isMobile ? objs.slice(-80) : isBigScreen ? objs.slice(0 - Math.max(Math.min(window.innerWidth * 0.5, objs.length), 500)) : objs.slice(-200);
