@@ -39,11 +39,11 @@ async def read_temp_from_esp32():
 
 
 async def control_breeze_x(device_ip, device_id, device_key, remote_manager, remote_id) :
-    print("Connecting to device", device_id, "at", device_ip, "with key", device_key)
+    # print("Connecting to device", device_id, "at", device_ip, "with key", device_key)
     # for connecting to a device we need its id, login key and ip address
 #    async with SwitcherType2Api(DeviceType.BREEZE, device_ip, device_id, device_key) as api:
     async with SwitcherType2Api(device_ip, device_id, device_key) as api:
-        print("Connected to device", device_id, "at", device_ip, "with key", device_key)
+        print("Connected to device", device_id, "at", device_ip)
         # read current data from json:
         data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25}
 
@@ -129,6 +129,8 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
                 new_state = DeviceState.OFF
             else:
                 print("device is off, should leave off?")
+        if room_too_hot == False and room_too_cold == False:
+            print("Room temp is within limits. current temp:", the_temp)
 
         if force_state is not None:
             print("*** FORCING DEVICE STATE", force_state, "***")
