@@ -66,11 +66,19 @@ async def add_cache_control_header(request: Request, call_next):
 # Path to the JSON file
 DATA_FILE = Path("webapp/static/data.json")
 
+HISTORY_CSV = Path("webapp/static/data.csv")
+
 def read_data_file():
     if DATA_FILE.exists():
         with DATA_FILE.open("r") as file:
             return json.load(file)
     return {}
+
+def read_history_file():
+    if HISTORY_CSV.exists():
+        with HISTORY_CSV.open("r") as file:
+            return file.read()
+    return ""
 
 def write_data_file(data: Dict[str, Any]):
     with DATA_FILE.open("w") as file:
@@ -90,6 +98,10 @@ async def read_root():
 @app.get("/data")
 async def read_data():
     return read_data_file()
+
+@app.get("/history")
+async def read_data():
+    return read_history_file()
 
 @app.get("/control/on")
 async def turn_on():
