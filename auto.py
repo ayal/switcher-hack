@@ -20,9 +20,90 @@ from aioswitcher.device import (
 import aiohttp
 import traceback
 import math
+import os
+import csv
 
+# Fixed file path
+CSV_FILE_PATH = 'webapp/static/data.csv'
 
-FORCE_CHANGE_DELTA = 1
+def read_last_n_rows(n=5):
+    """Reads the last n rows from a fixed CSV file path."""
+    if not os.path.exists(CSV_FILE_PATH):
+        # File doesn't exist, return None
+        return None
+
+    try:
+        with open(CSV_FILE_PATH, 'r') as f:
+            reader = list(csv.reader(f))
+            if len(reader) < n:
+                # Not enough rows in the file yet
+                return None
+            return reader[-n:]
+    except Exception as e:
+        # Catch any error that may occur during reading (e.g. file format issues)
+        print(f"Error reading file: {e}")
+        return None
+
+def has_state_changed(states):
+    """Checks if there has been a state change in the given list of states."""
+    # If there is more than one unique state, a state change occurred
+    return len(set(states)) > 1
+
+def determine_temp_trend(temps):
+    """Determines if the temperature is rising, falling, or stable based on general trend."""
+    deltas = [temps[i] - temps[i-1] for i in range(1, len(temps))]
+
+    rising_count = sum(delta > 0 for delta in deltas)
+    falling_count = sum(delta < 0 for delta in deltas)
+
+    # Determine trend based on the majority of changes
+    if rising_count > falling_count:
+        return "rising"
+    elif falling_count > rising_count:
+        return "falling"
+    else:
+        return "stable"
+
+def get_force_change(current_state, current_temp):
+    """Checks if the current state of the AC is inconsistent with the temperature trend."""
+    # Step 1: Read the last 5 entries from the file
+    data = read_last_n_rows(5)
+    if not data:
+        # Not enough data to determine trends or file doesn't exist
+        return None
+
+     # Step 2: Check if there's enough data (at least 5 rows)
+    if not data or len(data) < 5:
+        # Not enough data to determine trends or file doesn't exist
+        return None
+
+    # Step 2: Extract the state and temperature from the last 5 data points
+    temperatures = [float(row[2]) for row in data]  # Assuming temp is the 3rd column
+    states = [row[1].strip() == 'True' for row in data]  # Convert the 'True/False' string to boolean
+
+    # Step 3: Check if there was a state change
+    if has_state_changed(states):
+        # If there was a state change, we can't reliably calculate the trend
+        return None
+
+    # Step 4: Determine the temperature trend
+    temp_trend = determine_temp_trend(temperatures)
+
+    print(f"Temperature trend: {temp_trend}", current_state, current_temp)
+
+    # Step 5: Check the current state of the AC and compare with the trend
+    if current_state == DeviceState.OFF:
+        # AC is off, temperature should be stable or rising
+        if temp_trend == "falling":
+            return DeviceState.OFF  # Force it off, since the AC is likely still on
+    elif current_state == DeviceState.ON:
+        # AC is on, temperature should be stable or falling
+        if temp_trend == "rising":
+            return DeviceState.ON  # Force it on, since the AC is likely still off
+
+    # No need to force a state change
+    return None
+
 
 async def read_temp_from_esp32():
     url = "http://<ESP_IP>/data"
@@ -104,14 +185,8 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
 
         # sometimes the device state is WRONG (i.e it says it's on but it's not really on)
-        # so we need to force the device to turn on or off if temperature is way too hot or cold
-        force_state = None
-        # force state on or off according to an irregular hot_temp_delta or cold_temp_delta (more than FORCE_CHANGE_DELTA)
-        if data_json.get("auto", False) == True:
-            if room_too_hot and hot_temp_delta > FORCE_CHANGE_DELTA and device_is_on:
-                force_state = DeviceState.ON
-            if room_too_cold and cold_temp_delta > FORCE_CHANGE_DELTA and device_is_off:
-                force_state = DeviceState.OFF
+        # so we need to force the device to turn on or off if temperature trend is not consistent with the state
+        force_state = get_force_change(state.state, the_temp)
 
         if force_state is not None:
             print("*** Forcing state change - room is >>>", "TOO HOT" if room_too_hot else "TOO COLD", "<<< ***")
@@ -135,9 +210,6 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         if room_too_hot == False and room_too_cold == False:
             print("Room temp is within limits. current temp:", the_temp)
 
-        if force_state is not None:
-            print("*** FORCING DEVICE STATE", force_state, "***")
-            new_state = force_state
 
         fan_level_change = fan_level != state.fan_level
         ac_temp_change = turn_on_ac_temp != state.target_temperature
@@ -145,6 +217,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         off_to_off = state.state == DeviceState.OFF and new_state == DeviceState.OFF
 
         should_change = ((fan_level_change or ac_temp_change or state_change) and not off_to_off)
+        should_force = force_state is not None
         change_reason = "fan-level" if fan_level_change else "temp" if ac_temp_change else "state" if state_change else "none"
 
         print("Time: ", datetime.now())
@@ -161,12 +234,13 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         print(f"New state: {new_state}", f"State change: {state_change}")
         print(f"Off to off: {off_to_off}")
         print(f"Should change: {should_change}", "change reason: ", "none" if not should_change else change_reason)
+        print(f"Should force change: {should_force}", "force state: ", force_state)
         print("\n---\n")
 
         state = await api.get_breeze_state()
         thedatetime = datetime.now()
 
-        with open('webapp/static/data.csv', 'a') as f:
+        with open(CSV_FILE_PATH, 'a') as f:
             # append one row to the csv file
             f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {the_temp}\n')
 
@@ -181,11 +255,11 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
             print("\n\n----- Auto mode is off. Not changing anything. -----\n\n")
             return
 
-        if should_change:
+        if should_change or should_force:
             try:
                 await api.control_breeze_device(
                     remote,
-                    new_state,
+                    force_state if force_state is not None else new_state,
                     ThermostatMode.COOL,
                     turn_on_ac_temp,
                     fan_level,
@@ -202,7 +276,7 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         state = await api.get_breeze_state()
 
         thedatetime = datetime.now()
-        with open('webapp/static/data.csv', 'a') as f:
+        with open(CSV_FILE_PATH, 'a') as f:
             # append one row to the csv file
             f.write(f'{thedatetime}, {state.state == DeviceState.ON}, {the_temp}\n')
 
