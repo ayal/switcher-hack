@@ -25,6 +25,8 @@ import csv
 
 # Fixed file path
 CSV_FILE_PATH = 'webapp/static/data.csv'
+last_force_time = None
+force_cooldown_time = timedelta(minutes=5)
 
 def read_last_n_rows(n=5):
     """Reads the last n rows from a fixed CSV file path."""
@@ -64,7 +66,7 @@ def determine_temp_trend(temps):
     else:
         return "stable"
 
-def get_force_change(current_state, current_temp):
+def get_force_change(current_state, current_temp, last_force_time=None):
     """Checks if the current state of the AC is inconsistent with the temperature trend."""
     # Step 1: Read the last 5 entries from the file
     data = read_last_n_rows(5)
@@ -84,6 +86,10 @@ def get_force_change(current_state, current_temp):
     # Step 3: Check if there was a state change
     if has_state_changed(states):
         # If there was a state change, we can't reliably calculate the trend
+        return None
+
+
+    if last_force_time and datetime.now() - last_force_time < force_cooldown_time:
         return None
 
     # Step 4: Determine the temperature trend
@@ -186,9 +192,11 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
         # sometimes the device state is WRONG (i.e it says it's on but it's not really on)
         # so we need to force the device to turn on or off if temperature trend is not consistent with the state
-        force_state = get_force_change(state.state, the_temp)
+        global last_force_time
+        force_state = get_force_change(state.state, the_temp, last_force_time)
 
         if force_state is not None:
+            last_force_time = datetime.now()
             print("*** Forcing state change - room is >>>", "TOO HOT" if room_too_hot else "TOO COLD", "<<< ***")
 
 

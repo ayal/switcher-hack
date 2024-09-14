@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch
+from datetime import datetime
 
 # Assuming the classes and functions to be tested are imported:
 # from your_module import should_force_change, DeviceState
@@ -80,6 +81,46 @@ class TestShouldForceChange(unittest.TestCase):
         # Not enough data, should return None
         result = get_force_change(current_state, current_temp)
         self.assertIsNone(result)
+
+    @patch('auto.read_last_n_rows')
+    def test_cooldown_prevents_consecutive_force_changes(self, mock_read_last_n_rows):
+        # Simulating a temperature trend where the AC is off, but the temperature is falling
+        # A force change is expected, but the cooldown should prevent consecutive changes
+
+        # First 5 data points: AC is off, temperature is falling
+        mock_read_last_n_rows.return_value = [
+            ['time1', 'False', '25.0'],  # AC off, temperature at 25°C
+            ['time2', 'False', '24.5'],  # Temperature falling
+            ['time3', 'False', '24.0'],
+            ['time4', 'False', '23.5'],
+            ['time5', 'False', '23.0'],
+        ]
+
+        # AC is currently off, temperature is falling
+        current_state = DeviceState.OFF
+        current_temp = 23.0
+        last_force_time = None  # No force change has happened yet
+
+        # First call should trigger a force change
+        result = get_force_change(current_state, current_temp, last_force_time)
+        self.assertEqual(result, DeviceState.OFF, "First force change should be triggered")
+
+        # Simulate that a force change happened now (update last_force_time)
+        last_force_time = datetime.now()
+
+        # Now, keep the same falling temperature trend but expect no force change due to cooldown
+        mock_read_last_n_rows.return_value = [
+            ['time1', 'False', '23.0'],  # Temperature still falling
+            ['time2', 'False', '22.5'],
+            ['time3', 'False', '22.0'],
+            ['time4', 'False', '21.5'],
+            ['time5', 'False', '21.0'],
+        ]
+
+        # Second call should not trigger a force change due to cooldown
+        result = get_force_change(current_state, 21.0, last_force_time)
+        self.assertIsNone(result, "No force change should be triggered during cooldown")
+
 
 
 if __name__ == '__main__':
