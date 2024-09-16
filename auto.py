@@ -153,8 +153,12 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         esp_temp = esp_data["temp"]
         # print("esp temp", esp_temp)
 
-        # esp is more accurate?
-        the_temp = esp_temp
+        # if esp temp is below 10 or above 40, use the switcher temp
+        if esp_temp < 10 or esp_temp > 40:
+            the_temp = switcher_temp
+            print("ESP32 temp is out of range, using switcher temp")
+        else:
+            the_temp = esp_temp
 
 
         remote = remote_manager.get_remote(remote_id)
