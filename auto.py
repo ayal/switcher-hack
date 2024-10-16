@@ -114,17 +114,26 @@ def get_force_change(current_state, current_temp, last_force_time=None):
 async def read_temp_from_esp32():
     url = "http://<ESP_IP>/data"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            # Ensure the response is successful
-            if response.status == 200:
-                data = await response.json()
-                # Extract temperature and humidity from the response
-                temp = float(data.get("temp"))
-                hum = float(data.get("hum"))
-                return {"temp": temp, "hum": hum}
-            else:
-                return {"error": f"Failed to retrieve data, status code: {response.status}"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(url, timeout=10) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        try:
+                            temp = float(data.get("temp"))
+                            hum = float(data.get("hum"))
+                            return {"temp": temp, "hum": hum}
+                        except (ValueError, TypeError):
+                            return {"error": "Invalid temperature or humidity data"}
+                    else:
+                        return {"error": f"Failed to retrieve data, status code: {response.status}"}
+            except asyncio.TimeoutError:
+                return {"error": "Request timed out"}
+            except aiohttp.ClientError as e:
+                return {"error": f"Connection error: {str(e)}"}
+    except Exception as e:
+        return {"error": f"Unexpected error: {str(e)}"}
 
 
 async def control_breeze_x(device_ip, device_id, device_key, remote_manager, remote_id) :
@@ -148,9 +157,13 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         switcher_temp = state.temperature
         # print("switcher temp", switcher_temp)
 
+        esp_temp = 0
         esp_data = await read_temp_from_esp32()
         # print("esp data", esp_data)
-        esp_temp = esp_data["temp"]
+        if "error" in esp_data:
+            print("Error reading data from ESP32:", esp_data["error"])
+        else:
+            esp_temp = esp_data["temp"]
         # print("esp temp", esp_temp)
 
         # if esp temp is below 10 or above 40, use the switcher temp
