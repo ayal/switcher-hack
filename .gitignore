@@ -136,3 +136,7 @@ release-context.json
 /webapp/static/data.json
 
 nohup.out
+
+# mitmproxy captures (may contain auth tokens)
+capture.flow
+*.pcapng
