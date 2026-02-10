@@ -1,60 +1,28 @@
+"""FastAPI server for AC cloud control.
+
+Exposes HTTP endpoints that trigger Switcher cloud commands.
+Same endpoints the RPi had, but using cloud control (no LAN needed).
+
+Usage:
+    python server.py                    # Start on port 3001
+    curl localhost:3001/control/on      # Turn AC on
+    curl localhost:3001/control/off     # Turn AC off
+    curl "localhost:3001/control/on?temp=22&fan=high"
+"""
+
 import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-from typing import Any, Dict
-from pathlib import Path
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi import Request
-import asyncio
-import json
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
-from datetime import timedelta
-from pprint import PrettyPrinter
-from typing import Any, Dict, List, Union
-from binascii import hexlify, unhexlify
-from datetime import datetime
-from aioswitcher.api import Command, SwitcherType1Api, SwitcherType2Api
-from aioswitcher.api.remotes import SwitcherBreezeRemoteManager
-from aioswitcher.device import (
-    DeviceState,
-    ThermostatFanLevel,
-    ThermostatMode,
-    ThermostatSwing,
-)
+from pathlib import Path
+from typing import Any, Dict, Optional
 
-remote_manager = SwitcherBreezeRemoteManager()
+from cloud_control import cloud_control
 
-async def control_breeze_on(device_ip, device_id, device_key, remote_manager, remote_id) :
-    async with SwitcherType2Api(device_ip, device_id, device_key) as api:
-        remote = remote_manager.get_remote(remote_id)
-
-        await api.control_breeze_device(
-                    remote,
-                    DeviceState.ON,
-                    ThermostatMode.COOL,
-                    24,
-                    ThermostatFanLevel.MEDIUM,
-                    ThermostatSwing.OFF,
-                )
-
-async def control_breeze_off(device_ip, device_id, device_key, remote_manager, remote_id) :
-    async with SwitcherType2Api(device_ip, device_id, device_key) as api:
-        remote = remote_manager.get_remote(remote_id)
-
-        await api.control_breeze_device(
-                    remote,
-                    DeviceState.OFF,
-                    ThermostatMode.COOL,
-                    25,
-                    ThermostatFanLevel.LOW,
-                    ThermostatSwing.OFF,
-                )
+app = FastAPI(title="Switcher AC Cloud Control")
 
 
-app = FastAPI()
-
-# Middleware to set no-cache headers
 @app.middleware("http")
 async def add_cache_control_header(request: Request, call_next):
     response = await call_next(request)
@@ -63,66 +31,66 @@ async def add_cache_control_header(request: Request, call_next):
     response.headers["Expires"] = "0"
     return response
 
-# Path to the JSON file
-DATA_FILE = Path("webapp/static/data.json")
 
+# --- AC Control (cloud) ---
+
+@app.get("/control/on")
+async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
+    """Turn AC on. Optional: ?temp=22&fan=high&mode=cool"""
+    success = await cloud_control("on", temp=temp, fan=fan, mode=mode)
+    if success:
+        return {"status": "ok", "action": "on", "temp": temp, "fan": fan, "mode": mode}
+    return {"status": "error", "message": "cloud command failed"}
+
+
+@app.get("/control/off")
+async def turn_off():
+    """Turn AC off."""
+    success = await cloud_control("off")
+    if success:
+        return {"status": "ok", "action": "off"}
+    return {"status": "error", "message": "cloud command failed"}
+
+
+# --- Data/dashboard (legacy, kept for compatibility) ---
+
+DATA_FILE = Path("webapp/static/data.json")
 HISTORY_CSV = Path("webapp/static/data.csv")
 
-def read_data_file():
-    if DATA_FILE.exists():
-        with DATA_FILE.open("r") as file:
-            return json.load(file)
-    return {}
-
-def read_history_file():
-    if HISTORY_CSV.exists():
-        with HISTORY_CSV.open("r") as file:
-            return file.read()
-    return ""
-
-def write_data_file(data: Dict[str, Any]):
-    with DATA_FILE.open("w") as file:
-        json.dump(data, file, indent=4)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
-    with open("webapp/index.html") as file:
-        return file.read()
+    index = Path("webapp/index.html")
+    if index.exists():
+        return index.read_text()
+    return "<h1>Switcher AC Control</h1><p><a href='/control/on'>ON</a> | <a href='/control/off'>OFF</a></p>"
 
-@app.get("/autolog", response_class=HTMLResponse)
-async def read_root():
-    with open("auto-log.log") as file:
-        log_content = file.read()
-        return f"<pre>{log_content}</pre>"
 
 @app.get("/data")
 async def read_data():
-    return read_data_file()
+    if DATA_FILE.exists():
+        return json.loads(DATA_FILE.read_text())
+    return {}
+
 
 @app.get("/history")
-async def read_data():
-    return read_history_file()
-
-@app.get("/control/on")
-async def turn_on():
-    await control_breeze_on("<DEVICE_IP>", "<DEVICE_ID>", "03", remote_manager, "YACIFBI0")
-    return "ac is now on"
-
-@app.get("/control/off")
-async def turn_on():
-    await control_breeze_off("<DEVICE_IP>", "<DEVICE_ID>", "03", remote_manager, "YACIFBI0")
-    return "ac is now off"
+async def read_history():
+    if HISTORY_CSV.exists():
+        return PlainTextResponse(HISTORY_CSV.read_text())
+    return PlainTextResponse("")
 
 
 @app.post("/data")
 async def replace_data(new_data: Dict[str, Any]):
-    print("saving new data", new_data)
-    write_data_file(new_data)
+    DATA_FILE.write_text(json.dumps(new_data, indent=4))
     return new_data
 
-# Serve static files from the current directory
-app.mount("/static", StaticFiles(directory="./webapp/static"), name="static")
 
-if __name__ == '__main__':
+# Serve static files
+static_dir = Path("webapp/static")
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=3001)
