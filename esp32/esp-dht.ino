@@ -3,9 +3,10 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <DHT.h>
+#include "secrets.h"  // WIFI_SSID, WIFI_PASSWORD (gitignored; see secrets.h.example)
 
-const char *ssid = "AAA";
-const char *password = "<WIFI_PASSWORD>";
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASSWORD;
 
 WebServer server(80);
 

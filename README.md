@@ -103,13 +103,16 @@ Auto-starts everything on RPi boot via systemd (`/home/ayalg/switcher-hack`).
 
 ## Device Configuration
 
-| Property | Value |
+Device identity is read from `.env` (gitignored) — see `.env.example`. Discover your
+values with `python scripts/discover_devices.py`.
+
+| Property | Env var |
 |---|---|
-| Device IP | `<DEVICE_IP>` |
-| Device ID | `<DEVICE_ID>` |
-| Device Key | `03` (server) / `05` (auto) |
-| Remote ID | `YACIFBI0` |
-| ESP32 IP | `<ESP_IP>` |
+| Device IP | `DEVICE_IP` |
+| Device ID | `DEVICE_ID` |
+| Device Key | `DEVICE_KEY` |
+| Remote ID | `REMOTE_ID` |
+| ESP32 sensor URL | `ESP_URL` |
 
 ## Quick Start
 

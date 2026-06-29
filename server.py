@@ -39,6 +39,7 @@ async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
     """Turn AC on. Optional: ?temp=22&fan=high&mode=cool"""
     success = await cloud_control("on", temp=temp, fan=fan, mode=mode)
     if success:
+        _patch_data({"is_on": True, "ac_temp": temp})
         return {"status": "ok", "action": "on", "temp": temp, "fan": fan, "mode": mode}
     return {"status": "error", "message": "cloud command failed"}
 
@@ -48,6 +49,7 @@ async def turn_off():
     """Turn AC off."""
     success = await cloud_control("off")
     if success:
+        _patch_data({"is_on": False})
         return {"status": "ok", "action": "off"}
     return {"status": "error", "message": "cloud command failed"}
 
@@ -56,6 +58,17 @@ async def turn_off():
 
 DATA_FILE = Path("webapp/static/data.json")
 HISTORY_CSV = Path("webapp/static/data.csv")
+
+
+def _patch_data(patch: Dict[str, Any]) -> None:
+    """Merge a partial update into data.json so the dashboard reflects manual
+    control immediately (the auto loop re-syncs from the broadcast next cycle)."""
+    try:
+        d = json.loads(DATA_FILE.read_text()) if DATA_FILE.exists() else {}
+    except Exception:
+        d = {}
+    d.update(patch)
+    DATA_FILE.write_text(json.dumps(d, indent=4))
 
 
 @app.get("/", response_class=HTMLResponse)

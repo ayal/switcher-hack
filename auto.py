@@ -111,13 +111,11 @@ def get_force_change(current_state, current_temp, last_force_time=None):
     return None
 
 
-async def read_temp_from_esp32():
-    url = "http://<ESP_IP>/data"
-
+async def read_temp_from_esp32(url):
     try:
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(url, timeout=10) as response:
+                async with session.get(url, timeout=5) as response:
                     if response.status == 200:
                         data = await response.json()
                         try:
@@ -157,19 +155,23 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
         switcher_temp = state.temperature
         # print("switcher temp", switcher_temp)
 
+        # The ESP32 DHT11 sensor is optional. Set ESP_URL in .env (e.g.
+        # http://<ESP_IP>/data) to use it. With no ESP hardware, leave it
+        # unset and the temperature comes straight from the Switcher.
         esp_temp = 0
-        esp_data = await read_temp_from_esp32()
-        # print("esp data", esp_data)
-        if "error" in esp_data:
-            print("Error reading data from ESP32:", esp_data["error"])
-        else:
-            esp_temp = esp_data["temp"]
-        # print("esp temp", esp_temp)
+        esp_url = os.environ.get("ESP_URL")
+        if esp_url:
+            esp_data = await read_temp_from_esp32(esp_url)
+            if "error" in esp_data:
+                print("Error reading data from ESP32:", esp_data["error"])
+            else:
+                esp_temp = esp_data["temp"]
 
-        # if esp temp is below 10 or above 40, use the switcher temp
+        # Use the ESP temp only when present and sane (10-40C); otherwise fall
+        # back to the Switcher's own temperature reading.
         if esp_temp < 10 or esp_temp > 40:
             the_temp = switcher_temp
-            print("ESP32 temp is out of range, using switcher temp")
+            print("Using Switcher temp:", switcher_temp)
         else:
             the_temp = esp_temp
 
@@ -316,12 +318,14 @@ async def control_breeze_x(device_ip, device_id, device_key, remote_manager, rem
 
 # create the remote manager outside the context for re-using
 remote_manager = SwitcherBreezeRemoteManager()
-# python scripts/control_device.py control_thermostat          -d <DEVICE_ID> -i "<DEVICE_IP>" -r YACIFBI0 -s on -l 03 -m cool -f high -t 24
 
-key = "05"
-deviceID = "<DEVICE_ID>"
-remoteID = "YACIFBI0"
-IP = "<DEVICE_IP>"
+# Device params come from .env (gitignored) — see .env.example.
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv()
+key = os.environ.get("DEVICE_KEY", "")
+deviceID = os.environ.get("DEVICE_ID", "")
+remoteID = os.environ.get("REMOTE_ID", "")
+IP = os.environ.get("DEVICE_IP", "")
 
 index = 0
 async def main():

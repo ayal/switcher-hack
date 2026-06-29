@@ -94,6 +94,9 @@ celerybeat-schedule
 
 # Environments
 .env
+.env.*
+!.env.example
+*.backup
 .venv
 env/
 venv/
@@ -140,3 +143,9 @@ nohup.out
 # mitmproxy captures (may contain auth tokens)
 capture.flow
 *.pcapng
+
+# Device secrets / scratch captures (keep local, never commit)
+esp32/secrets.h
+device.js
+test-socket.py
+test_scapy.py
