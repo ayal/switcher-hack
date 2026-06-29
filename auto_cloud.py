@@ -1,12 +1,12 @@
 """Cloud variant of auto.py — runs the same thermostat automation, but:
 
-  * reads the live AC state + room temperature from the device's UDP BROADCAST
-    (the LAN TCP control API is dead on this unit's firmware), and
-  * controls the AC via the Switcher CLOUD (cloud_control.py), not the LAN API.
+  * reads the live AC state + room temperature from the Switcher CLOUD
+    (cloud_get_state), falling back to the LAN UDP broadcast only if the cloud
+    is unreachable, and
+  * controls the AC via the Switcher CLOUD (cloud_control), not the dead LAN API.
 
-Same threshold / fan / force-state logic as auto.py. Designed to run on any
-machine on the same Wi-Fi as the Switcher (for reading temp); control works
-from anywhere since it goes through the cloud.
+Same threshold / force-state logic as auto.py. Because both reads and writes go
+through the cloud, this can run anywhere with internet — no LAN access needed.
 
 Usage:
     python auto_cloud.py            # run the loop forever (controls the AC)
@@ -30,7 +30,7 @@ from aioswitcher.bridge import (
 from aioswitcher.device import DeviceState, ThermostatFanLevel, ThermostatMode
 
 # Importing cloud_control loads .env (it calls load_dotenv at import time)
-from cloud_control import cloud_control
+from cloud_control import cloud_control, cloud_get_state
 
 CSV_FILE_PATH = "webapp/static/data.csv"
 DATA_JSON_PATH = "webapp/static/data.json"
@@ -129,16 +129,22 @@ async def control_cycle(dry=False):
         with open(DATA_JSON_PATH, "w") as f:
             json.dump(data_json, f)
 
-    device = await read_breeze_state()
-    if device is None:
-        print("Could not read device state from broadcast this cycle; skipping.")
-        return
+    # Get current state from the CLOUD (works off-LAN). Fall back to the LAN
+    # UDP broadcast only if the cloud is unreachable.
+    st = await cloud_get_state()
+    source = "cloud"
+    if st is None:
+        dev = await read_breeze_state()
+        if dev is None:
+            print("Could not read device state (cloud + LAN both failed); skipping.")
+            return
+        st = {"temperature": dev.temperature, "state": dev.device_state,
+              "target_temperature": dev.target_temperature}
+        source = "lan-broadcast"
 
-    state = device.device_state
-    switcher_temp = device.temperature
-
-    # ESP32 sensor optional (see auto.py); default: use the Switcher's own temp
-    the_temp = switcher_temp
+    state = st["state"]
+    the_temp = st["temperature"]
+    cur_target = st["target_temperature"]
 
     turn_on_ac_temp = 25
     hot_temp_delta = round(the_temp - data_json["too_hot_temp"], 3)
@@ -172,17 +178,18 @@ async def control_cycle(dry=False):
     if room_too_cold and device_is_on:
         new_state = DeviceState.OFF
 
-    fan_level_change = fan_level != device.fan_level
-    ac_temp_change = turn_on_ac_temp != device.target_temperature
+    # Fan is NOT used as a change trigger: the cloud's fan view is unreliable
+    # for this open-loop IR device, so comparing it would cause phantom re-sends.
+    ac_temp_change = turn_on_ac_temp != cur_target
     state_change = new_state != state
     off_to_off = state == DeviceState.OFF and new_state == DeviceState.OFF
 
-    should_change = (fan_level_change or ac_temp_change or state_change) and not off_to_off
+    should_change = (ac_temp_change or state_change) and not off_to_off
     should_force = force_state is not None
 
     print("\n--- cycle", datetime.now(), "---")
     print("AUTO MODE:", data_json.get("auto", False))
-    print(f"State: {state}  RoomTemp: {the_temp}  AC target: {device.target_temperature}  fan: {device.fan_level}")
+    print(f"[{source}] State: {state}  RoomTemp: {the_temp}  AC target: {cur_target}")
     print(f"limits  hot>{data_json['too_hot_temp']}  cold<{data_json['too_cold_temp']}  "
           f"(too_hot={room_too_hot} too_cold={room_too_cold})")
     print(f"decide -> new_state={new_state}  ac_temp={turn_on_ac_temp}  fan={fan_level}")
@@ -193,7 +200,7 @@ async def control_cycle(dry=False):
         f.write(f"{datetime.now()}, {state == DeviceState.ON}, {the_temp}\n")
     data_json["is_on"] = state == DeviceState.ON
     data_json["temperature"] = the_temp
-    data_json["ac_temp"] = device.target_temperature
+    data_json["ac_temp"] = cur_target
     with open(DATA_JSON_PATH, "w") as f:
         json.dump(data_json, f)
 
@@ -216,8 +223,7 @@ async def control_cycle(dry=False):
     already_on_same = (
         target == DeviceState.ON
         and state == DeviceState.ON
-        and device.target_temperature == turn_on_ac_temp
-        and device.fan_level == fan_level
+        and cur_target == turn_on_ac_temp
     )
     if already_off or already_on_same:
         print("Device already in desired state — skipping command (no beep).")

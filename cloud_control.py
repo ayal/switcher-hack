@@ -160,6 +160,88 @@ def generate_ir_command(state, mode, temp, fan, current_state):
     )
 
 
+def build_get_state(seq, session_token):
+    """Build the cloud 'get device state' request (cmd 03050103)."""
+    body = (
+        "03050103"          # cmd: get state
+        + session_token     # 4-byte session token
+        + f"{seq:02x}00"   # sequence + padding
+        + "0100"            # direction: request
+        + "0000"            # padding
+        + DEVICE_ID         # 3-byte device ID
+        + "000000"          # padding
+        + ts_hex()          # 4-byte timestamp
+        + "00000000000000000000"  # 10-byte padding
+        + "f0fe"            # separator
+        + DEVICE_ID         # payload: device ID
+        + "00"
+    )
+    total_len = 2 + 2 + len(unhexlify(body)) + 4
+    length_hex = hexlify(pack("<H", total_len)).decode()
+    return cloud_sign("fef0" + length_hex + body, CRC2_INIT_CONTROL)
+
+
+# Field encodings inside the cloud state response (reverse-engineered, offsets
+# relative to the byte after the 'f0fe' separator in the inner 0103 message).
+_MODE_BY_HEX = {0x04: ThermostatMode.COOL, 0x01: ThermostatMode.AUTO,
+                0x02: ThermostatMode.DRY, 0x03: ThermostatMode.FAN,
+                0x05: ThermostatMode.HEAT}
+_FAN_BY_BYTE = {0x30: ThermostatFanLevel.AUTO, 0x31: ThermostatFanLevel.LOW,
+                0x32: ThermostatFanLevel.MEDIUM, 0x33: ThermostatFanLevel.HIGH}
+
+
+async def cloud_get_state():
+    """Fetch current device state from the Switcher cloud — no LAN access needed.
+
+    Returns a dict {temperature, state, target_temperature, mode, fan} or None.
+    Note: fan is best-effort (the cloud's view of fan is unreliable for this
+    open-loop IR device); don't use it for control decisions.
+    """
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(CLOUD_IP, CLOUD_PORT), timeout=10)
+    except Exception as e:
+        print("cloud_get_state: connect failed:", e)
+        return None
+    try:
+        writer.write(unhexlify(build_login(1)))
+        await writer.drain()
+        login = await asyncio.wait_for(reader.read(4096), timeout=5)
+        token = hexlify(login).decode()[16:24]
+        if len(token) < 8:
+            return None
+        writer.write(unhexlify(build_get_state(2, token)))
+        await writer.drain()
+        data = b""
+        for _ in range(6):
+            try:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
+            except asyncio.TimeoutError:
+                break
+            if not chunk:
+                break
+            data += chunk
+        h = hexlify(data).decode()
+        i = h.find("f0fe")
+        while i >= 0:
+            p = h[i + 4:]
+            if p[:4] == "0103":            # device-state response
+                b = bytes.fromhex(p)
+                if len(b) >= 53:
+                    return {
+                        "temperature": int.from_bytes(b[47:49], "little") / 10,
+                        "state": DeviceState.ON if b[49] == 1 else DeviceState.OFF,
+                        "mode": _MODE_BY_HEX.get(b[50]),
+                        "target_temperature": b[51],
+                        "fan": _FAN_BY_BYTE.get(b[52]),
+                    }
+            i = h.find("f0fe", i + 4)
+        return None
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
 async def cloud_control(action, temp=24, fan="medium", mode="cool"):
     """Send AC control command via Switcher cloud.
 
