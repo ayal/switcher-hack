@@ -27,7 +27,7 @@ from aioswitcher.bridge import (
     SWITCHER_UDP_PORT_TYPE2,
     SWITCHER_UDP_PORT_TYPE2_NEW_VERSION,
 )
-from aioswitcher.device import DeviceState, ThermostatFanLevel, ThermostatMode
+from aioswitcher.device import DeviceState
 
 # Importing cloud_control loads .env (it calls load_dotenv at import time)
 from cloud_control import cloud_control, cloud_get_state
@@ -39,12 +39,6 @@ DEVICE_ID = os.environ.get("DEVICE_ID", "")  # from .env (gitignored)
 last_force_time = None
 force_cooldown_time = timedelta(minutes=5)
 
-FAN_TO_STR = {
-    ThermostatFanLevel.LOW: "low",
-    ThermostatFanLevel.MEDIUM: "medium",
-    ThermostatFanLevel.HIGH: "high",
-    ThermostatFanLevel.AUTO: "auto",
-}
 
 
 # ---- trend / force-state helpers (unchanged from auto.py) ----
@@ -150,15 +144,13 @@ async def control_cycle(dry=False):
     hot_temp_delta = round(the_temp - data_json["too_hot_temp"], 3)
     cold_temp_delta = round(data_json["too_cold_temp"] - the_temp, 3)
 
-    fan_level = ThermostatFanLevel.LOW
+    # Fan is always LOW: changing fan is a separate IR command (a beep), and the
+    # cloud's fan reading is unreliable, so we never touch it. Still nudge the
+    # target setpoint down when the room is well above the limit (cool harder).
     if hot_temp_delta > 1:
-        fan_level = ThermostatFanLevel.MEDIUM
         turn_on_ac_temp -= 1
     if hot_temp_delta > 2:
-        fan_level = ThermostatFanLevel.HIGH
         turn_on_ac_temp -= 1
-    if hot_temp_delta < 0:
-        fan_level = ThermostatFanLevel.LOW
 
     room_too_hot = the_temp > data_json["too_hot_temp"]
     room_too_cold = the_temp < data_json["too_cold_temp"]
@@ -192,7 +184,7 @@ async def control_cycle(dry=False):
     print(f"[{source}] State: {state}  RoomTemp: {the_temp}  AC target: {cur_target}")
     print(f"limits  hot>{data_json['too_hot_temp']}  cold<{data_json['too_cold_temp']}  "
           f"(too_hot={room_too_hot} too_cold={room_too_cold})")
-    print(f"decide -> new_state={new_state}  ac_temp={turn_on_ac_temp}  fan={fan_level}")
+    print(f"decide -> new_state={new_state}  ac_temp={turn_on_ac_temp}  fan=low")
     print(f"should_change={should_change} should_force={should_force} force_state={force_state}")
 
     # log to CSV + data.json (drives the dashboard + the trend logic)
@@ -230,13 +222,12 @@ async def control_cycle(dry=False):
         return
 
     if dry:
-        print(f"[DRY] would send: {'ON ' + str(turn_on_ac_temp) + 'C ' + FAN_TO_STR.get(fan_level, 'medium') if target == DeviceState.ON else 'OFF'}")
+        print(f"[DRY] would send: {'ON ' + str(turn_on_ac_temp) + 'C low' if target == DeviceState.ON else 'OFF'}")
         return
 
     try:
         if target == DeviceState.ON:
-            await cloud_control("on", temp=turn_on_ac_temp,
-                                fan=FAN_TO_STR.get(fan_level, "medium"), mode="cool")
+            await cloud_control("on", temp=turn_on_ac_temp, fan="low", mode="cool")
         else:
             await cloud_control("off")
     except Exception as e:

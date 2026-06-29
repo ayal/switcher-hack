@@ -14,7 +14,6 @@ function dashboard() {
         busy: false,
         toastMsg: '',
         setTemp: 24,
-        setFan: 'medium',
         range: 24, // hours; 0 = all
         ranges: [{ n: 1, label: '1h' }, { n: 6, label: '6h' }, { n: 24, label: '24h' }, { n: 0, label: 'All' }],
         chart: null,
@@ -83,12 +82,12 @@ function dashboard() {
             this.busy = true;
             try {
                 const url = action === 'on'
-                    ? `/control/on?temp=${this.setTemp}&fan=${this.setFan}&mode=cool`
+                    ? `/control/on?temp=${this.setTemp}&fan=low&mode=cool`
                     : '/control/off';
                 const res = await fetch(url);
                 const j = await res.json().catch(() => ({}));
                 this.toast(j.status === 'ok'
-                    ? (action === 'on' ? `AC on · ${this.setTemp}°C · ${this.setFan}` : 'AC off')
+                    ? (action === 'on' ? `AC on · ${this.setTemp}°C` : 'AC off')
                     : 'Command failed');
                 setTimeout(() => this.fetchState(), 1500);
             } catch (e) {

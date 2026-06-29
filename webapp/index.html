@@ -170,23 +170,12 @@
                         <i data-lucide="power-off" class="w-5 h-5"></i> Turn Off
                     </button>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="rounded-2xl bg-white/5 border border-white/5 p-3">
-                        <label class="text-xs text-slate-400 flex items-center gap-1.5"><i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5"></i> Set temp</label>
-                        <div class="flex items-center justify-between mt-2">
-                            <button @click="setTemp -= 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="minus" class="w-4 h-4"></i></button>
-                            <span class="text-2xl font-bold tabular-nums" x-text="setTemp"></span>
-                            <button @click="setTemp += 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="plus" class="w-4 h-4"></i></button>
-                        </div>
-                    </div>
-                    <div class="rounded-2xl bg-white/5 border border-white/5 p-3">
-                        <label class="text-xs text-slate-400 flex items-center gap-1.5"><i data-lucide="fan" class="w-3.5 h-3.5"></i> Fan</label>
-                        <div class="grid grid-cols-4 gap-1 mt-2">
-                            <template x-for="f in ['low','medium','high','auto']" :key="f">
-                                <button @click="setFan = f" :class="setFan===f ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'"
-                                    class="h-8 rounded-lg text-[11px] font-medium capitalize transition" x-text="f.slice(0,4)"></button>
-                            </template>
-                        </div>
+                <div class="rounded-2xl bg-white/5 border border-white/5 p-3">
+                    <label class="text-xs text-slate-400 flex items-center gap-1.5"><i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5"></i> Set temp</label>
+                    <div class="flex items-center justify-between mt-2">
+                        <button @click="setTemp -= 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                        <span class="text-2xl font-bold tabular-nums" x-text="setTemp"></span>
+                        <button @click="setTemp += 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="plus" class="w-4 h-4"></i></button>
                     </div>
                 </div>
             </div>
@@ -223,7 +212,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=8" type="text/javascript"></script>
+    <script src="static/index.js?v=9" type="text/javascript"></script>
 </body>
 
 </html>
