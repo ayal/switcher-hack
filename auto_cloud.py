@@ -114,7 +114,7 @@ async def read_breeze_state(timeout=8):
 async def control_cycle(dry=False):
     global last_force_time
 
-    data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25}
+    data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25, "cool_temp": 26}
     try:
         with open(DATA_JSON_PATH, "r") as f:
             data_json = json.load(f)
@@ -122,6 +122,8 @@ async def control_cycle(dry=False):
         print("error reading data file", e, "\n\nRESETTING DATA FILE")
         with open(DATA_JSON_PATH, "w") as f:
             json.dump(data_json, f)
+    # cooling setpoint the AC is set to when turned on (configurable via the UI)
+    data_json.setdefault("cool_temp", 26)
 
     # Get current state from the CLOUD (works off-LAN). Fall back to the LAN
     # UDP broadcast only if the cloud is unreachable.
@@ -140,7 +142,7 @@ async def control_cycle(dry=False):
     the_temp = st["temperature"]
     cur_target = st["target_temperature"]
 
-    turn_on_ac_temp = 25
+    turn_on_ac_temp = int(data_json.get("cool_temp", 26))
     hot_temp_delta = round(the_temp - data_json["too_hot_temp"], 3)
     cold_temp_delta = round(data_json["too_cold_temp"] - the_temp, 3)
 

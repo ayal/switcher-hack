@@ -152,6 +152,25 @@
                         </div>
                     </template>
                 </div>
+                <!-- Cooling setpoint (the AC target temperature used when it turns on) -->
+                <div class="mt-4 rounded-2xl bg-white/5 border border-white/5 p-4 flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                        <i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5 text-sky-300"></i>
+                        <span>Cooling setpoint <span class="text-slate-500">· AC target when on</span></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="setCool(-1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="minus" class="w-4 h-4"></i>
+                        </button>
+                        <div class="text-center min-w-[3.5rem]">
+                            <span class="text-3xl font-bold tabular-nums" x-text="fmt(state.cool_temp)"></span>
+                            <span class="text-slate-400 text-lg">°C</span>
+                        </div>
+                        <button @click="setCool(1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Manual control -->
@@ -212,7 +231,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=9" type="text/javascript"></script>
+    <script src="static/index.js?v=10" type="text/javascript"></script>
 </body>
 
 </html>

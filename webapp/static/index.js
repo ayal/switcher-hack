@@ -8,7 +8,7 @@
 
 function dashboard() {
     return {
-        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23 },
+        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26 },
         connected: false,
         lastUpdated: '',
         busy: false,
@@ -77,6 +77,8 @@ function dashboard() {
         toggle(key) { this.state[key] = !this.state[key]; this.postState(); },
         increment(key) { this.state[key] = Math.round((Number(this.state[key]) + 0.5) * 2) / 2; this.postState(); },
         decrement(key) { this.state[key] = Math.round((Number(this.state[key]) - 0.5) * 2) / 2; this.postState(); },
+        // cooling setpoint = the AC target temperature used when it turns on (integer, 16-30°C)
+        setCool(delta) { this.state.cool_temp = Math.min(30, Math.max(16, (Number(this.state.cool_temp) || 26) + delta)); this.postState(); },
 
         async control(action) {
             this.busy = true;
