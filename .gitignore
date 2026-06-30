@@ -137,6 +137,7 @@ release-context.json
 
 /webapp/static/data.csv
 /webapp/static/data.json
+/webapp/static/decisions.json
 
 nohup.out
 

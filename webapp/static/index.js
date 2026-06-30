@@ -16,6 +16,7 @@ function dashboard() {
         setTemp: 24,
         now: Date.now(),
         pollOptions: [{ s: 30, label: '30s' }, { s: 60, label: '1m' }, { s: 120, label: '2m' }, { s: 300, label: '5m' }],
+        decisions: [],
         range: 24, // hours; 0 = all
         ranges: [{ n: 1, label: '1h' }, { n: 6, label: '6h' }, { n: 24, label: '24h' }, { n: 0, label: 'All' }],
         chart: null,
@@ -24,8 +25,10 @@ function dashboard() {
             this.fetchState();
             this.initChart();
             this.refreshChart();
+            this.fetchDecisions();
             setInterval(() => this.fetchState(), 5000);
             setInterval(() => this.refreshChart(), 30000);
+            setInterval(() => this.fetchDecisions(), 10000);
             setInterval(() => { this.now = Date.now(); }, 1000);  // drives the poll countdown
             window.addEventListener('resize', () => this.chart && this.chart.resize());
             this.$nextTick(() => this.icons());
@@ -105,6 +108,36 @@ function dashboard() {
             const iv = (Number(this.state.poll_interval) || 60) * 1000;
             if (this._nextPollMs === null || !iv) return 0;
             return Math.max(0, Math.min(100, (iv - (this._nextPollMs - this.now)) / iv * 100));
+        },
+
+        // --- decision log ---
+        async fetchDecisions() {
+            try {
+                const res = await fetch('/static/decisions.json?_t=' + Date.now(), { cache: 'no-store' });
+                if (!res.ok) { this.decisions = []; return; }
+                const arr = await res.json();
+                this.decisions = Array.isArray(arr) ? arr.slice().reverse() : [];  // newest first
+            } catch (e) { /* file may not exist until the first poll */ }
+        },
+        decLabel(a) {
+            return ({ on: 'Turned on', off: 'Turned off', none: 'No change', skip: 'Already set',
+                      'auto-off': 'Auto off', offline: 'Offline', error: 'Error' })[a] || a;
+        },
+        decDot(a) {
+            return ({ on: 'bg-green-400', off: 'bg-sky-400', none: 'bg-slate-500', skip: 'bg-slate-600',
+                      'auto-off': 'bg-slate-600', offline: 'bg-red-400', error: 'bg-red-400' })[a] || 'bg-slate-500';
+        },
+        decText(a) {
+            if (a === 'on') return 'text-green-300';
+            if (a === 'off') return 'text-sky-300';
+            if (a === 'offline' || a === 'error') return 'text-red-300';
+            return 'text-slate-200';
+        },
+        decTime(t) {
+            const ms = this.parseTs(t);
+            if (!isFinite(ms)) return '';
+            const d = new Date(ms);
+            return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
         },
 
         async control(action) {

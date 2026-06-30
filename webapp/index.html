@@ -253,6 +253,27 @@
             </div>
         </section>
 
+        <!-- Decision log -->
+        <section class="glass rounded-3xl p-5 mt-4">
+            <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-3">
+                <i data-lucide="history" class="w-4 h-4 text-sky-300"></i> Recent decisions
+                <span class="ml-auto text-[11px] font-normal text-slate-500">what the loop decided each check</span>
+            </h2>
+            <div class="space-y-1 max-h-72 overflow-y-auto pr-1" x-show="decisions.length">
+                <template x-for="(d, idx) in decisions" :key="idx">
+                    <div class="flex items-center gap-3 rounded-xl px-3 py-2 bg-white/[0.03] border border-white/5">
+                        <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="decDot(d.action)"></span>
+                        <div class="min-w-0 flex-1 truncate">
+                            <span class="text-sm font-medium" :class="decText(d.action)" x-text="decLabel(d.action)"></span>
+                            <span class="text-xs text-slate-400" x-text="d.reason ? ' · ' + d.reason : ''"></span>
+                        </div>
+                        <div class="text-xs text-slate-500 tabular-nums shrink-0" x-text="decTime(d.t)"></div>
+                    </div>
+                </template>
+            </div>
+            <p class="text-xs text-slate-500" x-show="!decisions.length">No decisions logged yet — waiting for the first poll.</p>
+        </section>
+
         <!-- Toast -->
         <div x-show="toastMsg" x-transition class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
             <div class="toast glass rounded-2xl px-4 py-3 flex items-center gap-2 text-sm shadow-xl">
@@ -262,7 +283,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=11" type="text/javascript"></script>
+    <script src="static/index.js?v=12" type="text/javascript"></script>
 </body>
 
 </html>

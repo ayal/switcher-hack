@@ -34,10 +34,38 @@ from cloud_control import cloud_control, cloud_get_state
 
 CSV_FILE_PATH = "webapp/static/data.csv"
 DATA_JSON_PATH = "webapp/static/data.json"
+DECISIONS_PATH = "webapp/static/decisions.json"
 DEVICE_ID = os.environ.get("DEVICE_ID", "")  # from .env (gitignored)
 
 last_force_time = None
 force_cooldown_time = timedelta(minutes=5)
+
+
+def record_decision(action, reason, temp=None, state=None, target=None):
+    """Append one decision to a rolling log (last 40) the dashboard displays.
+
+    action: on | off | none | skip | auto-off | offline
+    """
+    rec = {
+        "t": datetime.now().isoformat(),
+        "action": action,
+        "reason": reason,
+        "temp": temp,
+        "on": (state == DeviceState.ON) if state is not None else None,
+        "target": target,
+    }
+    items = []
+    try:
+        with open(DECISIONS_PATH) as f:
+            items = json.load(f)
+    except Exception:
+        items = []
+    items.append(rec)
+    try:
+        with open(DECISIONS_PATH, "w") as f:
+            json.dump(items[-40:], f)
+    except Exception as e:
+        print("could not write decisions:", e)
 
 
 
@@ -134,6 +162,7 @@ async def control_cycle(dry=False):
         dev = await read_breeze_state()
         if dev is None:
             print("Could not read device state (cloud + LAN both failed); skipping.")
+            record_decision("offline", "no state from cloud or LAN")
             return
         st = {"temperature": dev.temperature, "state": dev.device_state,
               "target_temperature": dev.target_temperature}
@@ -157,6 +186,13 @@ async def control_cycle(dry=False):
 
     room_too_hot = the_temp > data_json["too_hot_temp"]
     room_too_cold = the_temp < data_json["too_cold_temp"]
+
+    if room_too_hot:
+        reason = f"{the_temp}° above upper limit {data_json['too_hot_temp']}°"
+    elif room_too_cold:
+        reason = f"{the_temp}° below lower limit {data_json['too_cold_temp']}°"
+    else:
+        reason = f"{the_temp}° within {data_json['too_cold_temp']}–{data_json['too_hot_temp']}°"
 
     device_is_on = state == DeviceState.ON
     device_is_off = state == DeviceState.OFF
@@ -201,10 +237,12 @@ async def control_cycle(dry=False):
 
     if not data_json.get("auto", False):
         print("Auto mode OFF — not changing anything.")
+        record_decision("auto-off", "auto mode off", the_temp, state, cur_target)
         return
 
     if not (should_change or should_force):
         print("No change needed.")
+        record_decision("none", reason, the_temp, state, cur_target)
         return
 
     target = force_state if force_state is not None else new_state
@@ -222,20 +260,26 @@ async def control_cycle(dry=False):
     )
     if already_off or already_on_same:
         print("Device already in desired state — skipping command (no beep).")
+        record_decision("skip", "already " + ("on" if device_is_on else "off"),
+                        the_temp, state, cur_target)
         return
 
     if dry:
         print(f"[DRY] would send: {'ON ' + str(turn_on_ac_temp) + 'C low' if target == DeviceState.ON else 'OFF'}")
         return
 
+    forced = " (forced)" if (should_force and not should_change) else ""
     try:
         if target == DeviceState.ON:
             await cloud_control("on", temp=turn_on_ac_temp, fan="low", mode="cool")
+            record_decision("on", reason + forced, the_temp, DeviceState.ON, turn_on_ac_temp)
         else:
             await cloud_control("off")
+            record_decision("off", reason + forced, the_temp, DeviceState.OFF, cur_target)
     except Exception as e:
         print("Error controlling via cloud:", e)
         traceback.print_exc()
+        record_decision("error", str(e)[:80], the_temp, state, cur_target)
 
 
 def update_poll_meta():
