@@ -200,6 +200,37 @@
             </div>
         </section>
 
+        <!-- Polling loop -->
+        <section class="glass rounded-3xl p-5 mb-4">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <span class="grid place-items-center w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-300">
+                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                    </span>
+                    <div>
+                        <div class="text-sm font-semibold text-slate-200">Polling loop</div>
+                        <div class="text-xs text-slate-400">
+                            Last check <span class="text-slate-200" x-text="lastPollStr"></span>
+                            · next in <span class="text-sky-300 font-medium tabular-nums" x-text="nextPollStr"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1 text-xs">
+                    <span class="text-slate-400 mr-1">check every</span>
+                    <template x-for="opt in pollOptions" :key="opt.s">
+                        <button @click="setPollInterval(opt.s)"
+                            :class="(Number(state.poll_interval)||60)===opt.s ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'"
+                            class="px-3 py-1.5 rounded-lg font-medium transition" x-text="opt.label"></button>
+                    </template>
+                </div>
+            </div>
+            <!-- progress toward the next poll -->
+            <div class="mt-3 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-1000 ease-linear"
+                    :style="`width:${pollProgress}%`"></div>
+            </div>
+        </section>
+
         <!-- Chart -->
         <section class="glass rounded-3xl p-5">
             <div class="flex items-center justify-between mb-2">
@@ -231,7 +262,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=10" type="text/javascript"></script>
+    <script src="static/index.js?v=11" type="text/javascript"></script>
 </body>
 
 </html>

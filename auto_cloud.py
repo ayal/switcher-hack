@@ -114,7 +114,8 @@ async def read_breeze_state(timeout=8):
 async def control_cycle(dry=False):
     global last_force_time
 
-    data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25, "cool_temp": 26}
+    data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25,
+                 "cool_temp": 26, "poll_interval": 60}
     try:
         with open(DATA_JSON_PATH, "r") as f:
             data_json = json.load(f)
@@ -237,6 +238,34 @@ async def control_cycle(dry=False):
         traceback.print_exc()
 
 
+def update_poll_meta():
+    """Record this poll's time and return the (clamped) poll interval in seconds.
+
+    Reads `poll_interval` from data.json (configurable from the dashboard,
+    default 60s, clamped 10s-1h) and stamps `last_poll` so the UI can show the
+    heartbeat and count down to the next run.
+    """
+    data = {}
+    try:
+        with open(DATA_JSON_PATH) as f:
+            data = json.load(f)
+    except Exception:
+        pass
+    try:
+        interval = int(data.get("poll_interval", 60))
+    except (TypeError, ValueError):
+        interval = 60
+    interval = max(10, min(3600, interval))
+    data["poll_interval"] = interval
+    data["last_poll"] = datetime.now().isoformat()
+    try:
+        with open(DATA_JSON_PATH, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print("could not write poll meta:", e)
+    return interval
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Cloud-based AC thermostat loop")
     parser.add_argument("--once", action="store_true", help="run one cycle then exit")
@@ -253,7 +282,9 @@ async def main():
         except Exception as e:
             print(f"General Error: {e}")
             traceback.print_exc()
-        await asyncio.sleep(60)
+        interval = update_poll_meta()
+        print(f"next poll in {interval}s")
+        await asyncio.sleep(interval)
 
 
 if __name__ == "__main__":

@@ -8,12 +8,14 @@
 
 function dashboard() {
     return {
-        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26 },
+        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26, poll_interval: 60, last_poll: null },
         connected: false,
         lastUpdated: '',
         busy: false,
         toastMsg: '',
         setTemp: 24,
+        now: Date.now(),
+        pollOptions: [{ s: 30, label: '30s' }, { s: 60, label: '1m' }, { s: 120, label: '2m' }, { s: 300, label: '5m' }],
         range: 24, // hours; 0 = all
         ranges: [{ n: 1, label: '1h' }, { n: 6, label: '6h' }, { n: 24, label: '24h' }, { n: 0, label: 'All' }],
         chart: null,
@@ -24,6 +26,7 @@ function dashboard() {
             this.refreshChart();
             setInterval(() => this.fetchState(), 5000);
             setInterval(() => this.refreshChart(), 30000);
+            setInterval(() => { this.now = Date.now(); }, 1000);  // drives the poll countdown
             window.addEventListener('resize', () => this.chart && this.chart.resize());
             this.$nextTick(() => this.icons());
         },
@@ -79,6 +82,30 @@ function dashboard() {
         decrement(key) { this.state[key] = Math.round((Number(this.state[key]) - 0.5) * 2) / 2; this.postState(); },
         // cooling setpoint = the AC target temperature used when it turns on (integer, 16-30°C)
         setCool(delta) { this.state.cool_temp = Math.min(30, Math.max(16, (Number(this.state.cool_temp) || 26) + delta)); this.postState(); },
+
+        // --- polling loop heartbeat ---
+        setPollInterval(sec) { this.state.poll_interval = sec; this.postState(); },
+        get lastPollStr() {
+            const t = this.parseTs(this.state.last_poll);
+            if (!isFinite(t)) return '—';
+            const d = new Date(t);
+            return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+        },
+        get _nextPollMs() {
+            const t = this.parseTs(this.state.last_poll);
+            return isFinite(t) ? t + (Number(this.state.poll_interval) || 60) * 1000 : null;
+        },
+        get nextPollStr() {
+            if (this._nextPollMs === null) return '—';
+            const rem = Math.max(0, Math.round((this._nextPollMs - this.now) / 1000));
+            const m = Math.floor(rem / 60), s = rem % 60;
+            return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+        },
+        get pollProgress() {
+            const iv = (Number(this.state.poll_interval) || 60) * 1000;
+            if (this._nextPollMs === null || !iv) return 0;
+            return Math.max(0, Math.min(100, (iv - (this._nextPollMs - this.now)) / iv * 100));
+        },
 
         async control(action) {
             this.busy = true;
