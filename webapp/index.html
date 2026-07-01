@@ -1,131 +1,292 @@
 <!DOCTYPE html>
+<html lang="en" class="dark">
 
 <head>
-    <title>AYAL AC</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-
     <meta charset="UTF-8" />
-    <meta name="description" content="AYAL AC" />
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AYAL AC</title>
+    <meta name="description" content="AYAL AC — Smart Climate Control" />
 
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+                    colors: { ink: { 900: '#0b1020', 800: '#0f152b', 700: '#161d3a' } },
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+
     <style>
-        html,
+        :root { color-scheme: dark; }
         body {
-            height: 100vh;
-            width: 100vw;
-            margin: 0;
-            padding: 0;
+            background:
+                radial-gradient(1200px 600px at 80% -10%, rgba(56,189,248,0.12), transparent 60%),
+                radial-gradient(1000px 500px at 0% 10%, rgba(129,140,248,0.12), transparent 55%),
+                #0b1020;
         }
-
-        #myChatWrapper {
-            height: 70vh;
-            background: whitesmoke;
-            width: 100vw;
+        .glass {
+            background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(10px);
         }
-
-        #myChart {
-            width: 100%;
-            height: 100%;
+        .pulse { box-shadow: 0 0 0 0 rgba(34,197,94,0.7); animation: pulse 2s infinite; }
+        @keyframes pulse {
+            70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); }
+            100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
         }
-
-        #root {
-            margin: 0 auto;
-        }
+        [x-cloak] { display: none !important; }
+        .toast { animation: slidein .25s ease, fadeout .4s ease 2.6s forwards; }
+        @keyframes slidein { from { transform: translateY(12px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+        @keyframes fadeout { to { opacity: 0; transform: translateY(8px) } }
     </style>
-
 </head>
 
-<body>
-    <div id="myChatWrapper">
-        <canvas id="myChart"></canvas>
-    </div>
+<body class="min-h-screen text-slate-100 font-sans antialiased">
+    <div x-data="dashboard()" x-init="init()" x-cloak class="max-w-5xl mx-auto px-4 py-6 sm:py-10">
 
-    <div id="root" x-data="toggleControl()" x-init="init()" class="p-4 max-w-sm mx-auto bg-white rounded-xl shadow-md">
-        <div class="flex items-center justify-between space-x-2">
-            <span :class="state.is_on ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
-                class="text-xs font-medium px-2.5 py-0.5 rounded dark:bg-green-900 dark:text-green-300">
-                <span x-text="state.is_on ? 'On' : 'Off'"></span>
-            </span>
-
-            <span
-                class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-300">
-                Temperature: <span x-text="state.temperature"></span>°C
-            </span>
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" @click="toggle('auto')" :checked="state.auto" class="sr-only peer">
-                <div
-                    class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-3">
+                <div class="grid place-items-center w-11 h-11 rounded-2xl bg-gradient-to-br from-sky-400/30 to-indigo-500/30 border border-white/10">
+                    <i data-lucide="air-vent" class="w-6 h-6 text-sky-300"></i>
                 </div>
-                <span class="ms-3 text-sm font-medium text-gray-900">Enabled</span>
-            </label>
-        </div>
-
-
-
-
-        <div class="flex gap-4 mt-4">
-            <div>
-                <label for="too-hot-input" class="block mb-2 text-sm font-medium text-gray-900">Upper limit</label>
-                <div class="relative flex items-center max-w-[8rem]">
-                    <button type="button" @click="decrement('too_hot_temp')"
-                        class="bg-gray-100  hover:bg-gray-200 border border-gray-300 rounded-s-lg p-3 h-11 focus:ring-gray-100 focus:ring-2 focus:outline-none">
-                        <svg class="w-3 h-3 text-gray-900" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-                            fill="none" viewBox="0 0 18 2">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M1 1h16" />
-                        </svg>
-                    </button>
-                    <input type="text" id="too-hot-input" x-model="state.too_hot_temp"
-                        class="bg-gray-50 border-x-0 border-gray-300 h-11 text-center text-gray-900 text-sm focus:ring-blue-500 focus:border-blue-500 block w-full py-2.5"
-                        required />
-                    <button type="button" @click="increment('too_hot_temp')"
-                        class="bg-gray-100  hover:bg-gray-200 border border-gray-300 rounded-e-lg p-3 h-11 focus:ring-gray-100 focus:ring-2 focus:outline-none">
-                        <svg class="w-3 h-3 text-gray-900 " aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-                            fill="none" viewBox="0 0 18 18">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M9 1v16M1 9h16" />
-                        </svg>
-                    </button>
+                <div>
+                    <h1 class="text-xl font-extrabold tracking-tight leading-none">AYAL <span class="text-sky-400">AC</span></h1>
+                    <p class="text-xs text-slate-400 mt-1">Smart climate control</p>
                 </div>
             </div>
-            <div>
-                <label for="too-cold-input" class="block mb-2 text-sm font-medium text-gray-900">Lower limit</label>
-                <div class="relative flex items-center max-w-[8rem]">
-                    <button type="button" @click="decrement('too_cold_temp')"
-                        class="bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-s-lg p-3 h-11 focus:ring-gray-100 focus:ring-2 focus:outline-none">
-                        <svg class="w-3 h-3 text-gray-900 " aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-                            fill="none" viewBox="0 0 18 2">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M1 1h16" />
-                        </svg>
-                    </button>
-                    <input type="text" id="too-cold-input" x-model="state.too_cold_temp"
-                        class="bg-gray-50 border-x-0 border-gray-300 h-11 text-center text-gray-900 text-sm focus:ring-blue-500 focus:border-blue-500 block w-full py-2.5"
-                        required />
-                    <button type="button" @click="increment('too_cold_temp')"
-                        class="bg-gray-100  hover:bg-gray-200 border border-gray-300 rounded-e-lg p-3 h-11 focus:ring-gray-100  focus:ring-2 focus:outline-none">
-                        <svg class="w-3 h-3 text-gray-900 " aria-hidden="true" xmlns="http://www.w3.org/2000/svg"
-                            fill="none" viewBox="0 0 18 18">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M9 1v16M1 9h16" />
-                        </svg>
-                    </button>
+            <div class="flex items-center gap-2 text-xs text-slate-300">
+                <span class="w-2.5 h-2.5 rounded-full" :class="connected ? 'bg-green-400 pulse' : 'bg-slate-500'"></span>
+                <span x-text="connected ? 'Live' : 'Offline'"></span>
+                <span class="text-slate-500" x-text="lastUpdated"></span>
+            </div>
+        </header>
+
+        <!-- Stat cards -->
+        <section class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <!-- Room temp -->
+            <div class="glass rounded-3xl p-5">
+                <div class="flex items-center gap-2 text-slate-400 text-sm">
+                    <i data-lucide="thermometer" class="w-4 h-4"></i> Room temperature
+                    <span class="ml-auto flex items-center gap-1 text-[10px] font-medium text-green-300" x-show="tempLive">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-400 pulse"></span> live
+                    </span>
+                </div>
+                <div class="mt-3 flex items-end gap-1">
+                    <span class="text-5xl font-extrabold tabular-nums" x-text="fmt(state.temperature)"></span>
+                    <span class="text-2xl font-semibold text-slate-400 mb-1">°C</span>
+                </div>
+                <div class="mt-2 text-xs" :class="bandClass">
+                    <span x-text="bandLabel"></span>
                 </div>
             </div>
+
+            <!-- AC status -->
+            <div class="glass rounded-3xl p-5">
+                <div class="flex items-center gap-2 text-slate-400 text-sm">
+                    <i data-lucide="power" class="w-4 h-4"></i> AC status
+                </div>
+                <div class="mt-3 flex items-center gap-3">
+                    <span class="grid place-items-center w-12 h-12 rounded-2xl"
+                        :class="state.is_on ? 'bg-green-500/15 text-green-300' : 'bg-slate-500/15 text-slate-400'">
+                        <i data-lucide="snowflake" class="w-6 h-6" x-show="state.is_on"></i>
+                        <i data-lucide="power-off" class="w-6 h-6" x-show="!state.is_on"></i>
+                    </span>
+                    <div>
+                        <div class="text-2xl font-bold leading-none" x-text="state.is_on ? 'On' : 'Off'"></div>
+                        <div class="text-xs text-slate-400 mt-1" x-text="state.is_on ? ('Target ' + fmt(state.ac_temp) + '°C') : 'Idle'"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto mode -->
+            <div class="glass rounded-3xl p-5 flex flex-col justify-between">
+                <div class="flex items-center gap-2 text-slate-400 text-sm">
+                    <i data-lucide="bot" class="w-4 h-4"></i> Auto mode
+                </div>
+                <label class="mt-3 inline-flex items-center justify-between cursor-pointer">
+                    <span class="text-sm text-slate-300" x-text="state.auto ? 'Thermostat enabled' : 'Manual only'"></span>
+                    <span class="relative">
+                        <input type="checkbox" class="sr-only peer" :checked="state.auto" @click="toggle('auto')">
+                        <span class="block w-12 h-7 rounded-full bg-slate-600 peer-checked:bg-sky-500 transition-colors"></span>
+                        <span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform peer-checked:translate-x-5"></span>
+                    </span>
+                </label>
+            </div>
+        </section>
+
+        <!-- Controls -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <!-- Limits -->
+            <div class="glass rounded-3xl p-5">
+                <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
+                    <i data-lucide="sliders-horizontal" class="w-4 h-4 text-sky-300"></i> Temperature limits
+                </h2>
+                <div class="grid grid-cols-2 gap-4">
+                    <template x-for="lim in [{k:'too_hot_temp',label:'Upper limit',hint:'Turn on above',icon:'flame',color:'text-orange-300'},{k:'too_cold_temp',label:'Lower limit',hint:'Turn off below',icon:'snowflake',color:'text-sky-300'}]" :key="lim.k">
+                        <div class="rounded-2xl bg-white/5 border border-white/5 p-4">
+                            <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                                <i :data-lucide="lim.icon" class="w-3.5 h-3.5" :class="lim.color"></i>
+                                <span x-text="lim.label"></span>
+                            </div>
+                            <div class="mt-3 flex items-center justify-between gap-2">
+                                <button @click="decrement(lim.k)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                                    <i data-lucide="minus" class="w-4 h-4"></i>
+                                </button>
+                                <div class="text-center">
+                                    <span class="text-3xl font-bold tabular-nums" x-text="fmt(state[lim.k])"></span>
+                                    <span class="text-slate-400 text-lg">°C</span>
+                                </div>
+                                <button @click="increment(lim.k)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                                    <i data-lucide="plus" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            <p class="mt-2 text-[11px] text-slate-500" x-text="lim.hint"></p>
+                        </div>
+                    </template>
+                </div>
+                <!-- Cooling setpoint (the AC target temperature used when it turns on) -->
+                <div class="mt-4 rounded-2xl bg-white/5 border border-white/5 p-4 flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                        <i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5 text-sky-300"></i>
+                        <span>Cooling setpoint <span class="text-slate-500">· AC target when on</span></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="setCool(-1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="minus" class="w-4 h-4"></i>
+                        </button>
+                        <div class="text-center min-w-[3.5rem]">
+                            <span class="text-3xl font-bold tabular-nums" x-text="fmt(state.cool_temp)"></span>
+                            <span class="text-slate-400 text-lg">°C</span>
+                        </div>
+                        <button @click="setCool(1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual control -->
+            <div class="glass rounded-3xl p-5">
+                <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
+                    <i data-lucide="hand" class="w-4 h-4 text-indigo-300"></i> Manual control
+                    <span class="ml-auto text-[11px] text-slate-500">overrides until next auto cycle</span>
+                </h2>
+                <div class="flex items-center gap-3 mb-4">
+                    <button @click="control('on')" :disabled="busy"
+                        class="flex-1 flex items-center justify-center gap-2 h-12 rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 font-semibold shadow-lg shadow-sky-900/30 transition disabled:opacity-50">
+                        <i data-lucide="snowflake" class="w-5 h-5"></i> Turn On
+                    </button>
+                    <button @click="control('off')" :disabled="busy"
+                        class="flex-1 flex items-center justify-center gap-2 h-12 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 font-semibold transition disabled:opacity-50">
+                        <i data-lucide="power-off" class="w-5 h-5"></i> Turn Off
+                    </button>
+                </div>
+                <div class="rounded-2xl bg-white/5 border border-white/5 p-3">
+                    <label class="text-xs text-slate-400 flex items-center gap-1.5"><i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5"></i> Set temp</label>
+                    <div class="flex items-center justify-between mt-2">
+                        <button @click="setTemp -= 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                        <span class="text-2xl font-bold tabular-nums" x-text="setTemp"></span>
+                        <button @click="setTemp += 1" class="w-8 h-8 grid place-items-center rounded-lg bg-white/5 hover:bg-white/10"><i data-lucide="plus" class="w-4 h-4"></i></button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Polling loop -->
+        <section class="glass rounded-3xl p-5 mb-4">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <span class="grid place-items-center w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-300">
+                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                    </span>
+                    <div>
+                        <div class="text-sm font-semibold text-slate-200">Polling loop</div>
+                        <div class="text-xs text-slate-400">
+                            Last check <span class="text-slate-200" x-text="lastPollStr"></span>
+                            · next in <span class="text-sky-300 font-medium tabular-nums" x-text="nextPollStr"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1 text-xs">
+                    <span class="text-slate-400 mr-1">check every</span>
+                    <template x-for="opt in pollOptions" :key="opt.s">
+                        <button @click="setPollInterval(opt.s)"
+                            :class="(Number(state.poll_interval)||60)===opt.s ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'"
+                            class="px-3 py-1.5 rounded-lg font-medium transition" x-text="opt.label"></button>
+                    </template>
+                </div>
+            </div>
+            <!-- progress toward the next poll -->
+            <div class="mt-3 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                <div class="h-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-1000 ease-linear"
+                    :style="`width:${pollProgress}%`"></div>
+            </div>
+        </section>
+
+        <!-- Chart -->
+        <section class="glass rounded-3xl p-5">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                    <i data-lucide="activity" class="w-4 h-4 text-sky-300"></i> Temperature history
+                </h2>
+                <div class="flex items-center gap-1 text-xs">
+                    <template x-for="r in ranges" :key="r.n">
+                        <button @click="setRange(r.n)" :class="range===r.n ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'"
+                            class="px-3 py-1.5 rounded-lg font-medium transition" x-text="r.label"></button>
+                    </template>
+                </div>
+            </div>
+            <div id="chart" class="w-full" style="height: 60vh; min-height: 360px;"></div>
+            <div class="flex items-center gap-4 mt-3 text-xs text-slate-400">
+                <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 rounded bg-sky-400"></span> Room temp</span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-green-400"></span> AC on</span>
+                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-slate-500"></span> AC off</span>
+                <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 rounded bg-orange-400/70" style="border-top:1px dashed"></span> limits</span>
+            </div>
+        </section>
+
+        <!-- Decision log -->
+        <section class="glass rounded-3xl p-5 mt-4">
+            <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-3">
+                <i data-lucide="history" class="w-4 h-4 text-sky-300"></i> Recent decisions
+                <span class="ml-auto text-[11px] font-normal text-slate-500">what the loop decided each check</span>
+            </h2>
+            <div class="space-y-1 max-h-72 overflow-y-auto pr-1" x-show="decisions.length">
+                <template x-for="(d, idx) in decisions" :key="idx">
+                    <div class="flex items-center gap-3 rounded-xl px-3 py-2 bg-white/[0.03] border border-white/5">
+                        <span class="w-2.5 h-2.5 rounded-full shrink-0" :class="decDot(d.action)"></span>
+                        <div class="min-w-0 flex-1 truncate">
+                            <span class="text-sm font-medium" :class="decText(d.action)" x-text="decLabel(d.action)"></span>
+                            <span class="text-xs text-slate-400" x-text="d.reason ? ' · ' + d.reason : ''"></span>
+                        </div>
+                        <div class="text-xs text-slate-500 tabular-nums shrink-0" x-text="decTime(d.t)"></div>
+                    </div>
+                </template>
+            </div>
+            <p class="text-xs text-slate-500" x-show="!decisions.length">No decisions logged yet — waiting for the first poll.</p>
+        </section>
+
+        <!-- Toast -->
+        <div x-show="toastMsg" x-transition class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
+            <div class="toast glass rounded-2xl px-4 py-3 flex items-center gap-2 text-sm shadow-xl">
+                <i data-lucide="check-circle" class="w-4 h-4 text-green-400"></i>
+                <span x-text="toastMsg"></span>
+            </div>
         </div>
-
-
-
     </div>
 
-
-
-    <script src="static/index.js?v=3" type="text/javascript"></script>
-
-
+    <script src="static/index.js?v=13" type="text/javascript"></script>
 </body>
 
 </html>

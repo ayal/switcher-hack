@@ -1,229 +1,334 @@
-const loadCSVFile = async (file) => {
-    // console.log(`Loading file: ${file}`);
-    const res = await fetch(file);
-    if (!res.ok) {
-        throw new Error(`Failed to load file: ${file}`);
-    }
+/* AYAL AC dashboard — Alpine component + ECharts renderer.
+ * Data contract (unchanged):
+ *   GET  /data            -> { is_on, auto, temperature, too_hot_temp, too_cold_temp, ac_temp }
+ *   POST /data            <- the full state object
+ *   GET  /history         -> CSV "time, is_on(True/False), temperature"
+ *   GET  /control/on?temp=&fan=&mode=cool , GET /control/off
+ */
 
-    const resJson = await res.text();
-    return resJson;
-}
-
-const loadJSONFile = async (file) => {
-    // console.log(`Loading file: ${file}`);
-    const res = await fetch(file);
-    if (!res.ok) {
-        throw new Error(`Failed to load file: ${file}`);
-    }
-
-    const resJson = await res.json();
-    return resJson;
-}
-
-function toggleControl() {
+function dashboard() {
     return {
-      state: {
-        is_on: false,
-        auto: false,
-        temperature: 20
-      },
-      init() {
-        this.fetchData();
-        setInterval(() => this.fetchData(), 5000);
-      },
-      async fetchData() {
-        try {
-          const response = await fetch('/static/data.json');
-          const data = await response.json();
-          this.state = data;
-        } catch (error) {
-          console.error('Error fetching data:', error);
-        }
-      },
-      async updateData() {
-        try {
-          await fetch('/data', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(this.state),
-          });
-        } catch (error) {
-          console.error('Error updating data:', error);
-        }
-      },
-      toggle(key) {
-        this.state[key] = !this.state[key];
-        this.updateData();
-      },
-      increment(key) {
-        this.state[key]++;
-        this.updateData();
-      },
-      decrement(key) {
-        this.state[key]--;
-        this.updateData();
-      }
-    }
-  }
+        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26, poll_interval: 60, last_poll: null },
+        connected: false,
+        lastUpdated: '',
+        busy: false,
+        toastMsg: '',
+        setTemp: 24,
+        now: Date.now(),
+        tempFreshAt: 0,
+        pollOptions: [{ s: 30, label: '30s' }, { s: 60, label: '1m' }, { s: 120, label: '2m' }, { s: 300, label: '5m' }],
+        decisions: [],
+        range: 24, // hours; 0 = all
+        ranges: [{ n: 1, label: '1h' }, { n: 6, label: '6h' }, { n: 24, label: '24h' }, { n: 0, label: 'All' }],
+        chart: null,
 
-function formatDate(date, locale = 'he-IL') {
-    const day = new Intl.DateTimeFormat(locale, { day: '2-digit' }).format(date);
-    const month = new Intl.DateTimeFormat(locale, { month: '2-digit' }).format(date);
-    const year = new Intl.DateTimeFormat(locale, { year: 'numeric' }).format(date);
+        init() {
+            this.fetchState();
+            this.fetchLiveTemp();
+            this.initChart();
+            this.refreshChart();
+            this.fetchDecisions();
+            setInterval(() => this.fetchState(), 5000);
+            setInterval(() => this.fetchLiveTemp(), 15000);  // near-live room temp from the cloud
+            setInterval(() => this.refreshChart(), 30000);
+            setInterval(() => this.fetchDecisions(), 10000);
+            setInterval(() => { this.now = Date.now(); }, 1000);  // drives the poll countdown
+            window.addEventListener('resize', () => this.chart && this.chart.resize());
+            this.$nextTick(() => this.icons());
+        },
 
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+        icons() { if (window.lucide) lucide.createIcons(); },
 
-    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
-}
+        fmt(v) {
+            const n = Number(v);
+            if (!isFinite(n)) return '--';
+            return Number.isInteger(n) ? String(n) : n.toFixed(1);
+        },
 
-const fetchData = async () => {
-    const csv = await loadCSVFile('static/data.csv?_t=' + Date.now());
-    
-    const lines = csv.split('\n');
-    // console.log(`Lines: ${lines.length}`);
-    const headers = lines[0].split(',');
-    let objs = [];
+        get bandLabel() {
+            const t = Number(this.state.temperature);
+            if (t > Number(this.state.too_hot_temp)) return 'Above upper limit';
+            if (t < Number(this.state.too_cold_temp)) return 'Below lower limit';
+            return 'Within comfort range';
+        },
+        get bandClass() {
+            const t = Number(this.state.temperature);
+            if (t > Number(this.state.too_hot_temp)) return 'text-orange-300';
+            if (t < Number(this.state.too_cold_temp)) return 'text-sky-300';
+            return 'text-green-300';
+        },
+        get tempLive() { return this.now - this.tempFreshAt < 20000; },
 
-    // headers are: time (iso string), is_on (True, False), temperature (float
-    for (let i = 1; i < lines.length; i++) {
-        const obj = {};
-        const values = lines[i].split(',');
-        for (let j = 0; j < headers.length; j++) {
-            const header = headers[j]?.trim();
-            const rawValue = values[j]?.trim();
-            // console.log('rawValue', rawValue);
-            if (!rawValue) {
-                continue;
-            }
-            const value = header === 'time' ? new Date(rawValue).getTime() : header === 'temperature' ? parseFloat(rawValue) : header === 'is_on' ? rawValue === 'True' : rawValue;
-            // console.log('header', header, 'raw value', rawValue, 'value', value);
-            obj[header] = value;
-        }
-        if (Object.keys(obj).length > 0) {
-            objs.push(obj);
-        }
-    }
-
-    return objs;
-}
-
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-const renderChart = async () => {
-    const isLandscpe = false;
-    const isMobile = window.innerWidth < 400;
-    const isSmallScreen = window.innerWidth < 1000;
-    const isBigScreen = !isSmallScreen;
-
-    let objs = await fetchData();
-
-    console.log('data-point-length-', objs.length, 'innerWidth', window.innerWidth, isBigScreen);
-    // console.log(objs)
-    // take only the last 100 records:
-    objs = isMobile ? objs.slice(-80) : isBigScreen ? objs.slice(0 - Math.max(Math.min(window.innerWidth * 0.5, objs.length), 500)) : objs.slice(-200);
-
-
-    const ctx = document.getElementById('myChart');
-
-    function getColor(value) {
-        // console.log('getColor', value);
-        return value ? 'green' : 'red';
-    }
-
-    const dataValues = objs.map(obj => obj.is_on);
-    const pointColors = dataValues.map(value => getColor(value));
-
-    const dataForChart = {
-        labels: objs.map(obj => `${formatDate(new Date(obj.time))} - ${obj.temperature}°C`),
-        datasets: [
-            {
-                data: !isLandscpe ? objs.map(obj => ({ x: obj.time, y: obj.temperature })) : objs.map(obj => ({ x: obj.temperature, y: obj.time })),
-                backgroundColor: pointColors,
-                borderColor: pointColors,
-                borderWidth: 1,
-                pointRadius: 2,
-            }
-        ]
-
-    }
-
-    const minTemp = Math.min(...objs.map(obj => obj.temperature));
-    const maxTemp = Math.max(...objs.map(obj => obj.temperature));
-
-    console.log('min / max date', objs[0].time, objs[objs.length - 1].time);
-    console.log('min / max temperature', minTemp, maxTemp);
-
-    const scales = {
-        y: {
-            beginAtZero: true,
-            title: {
-                display: true,
-                text: 'Temperature (°C)'
-            },
-            min: minTemp - 3,
-            max: maxTemp + 3,
-            ticks: {
-                callback: function (value, index, values) {
-                    return `${value}°C`;
+        async fetchState() {
+            try {
+                const res = await fetch('/data', { cache: 'no-store' });
+                const data = await res.json();
+                if (data && Object.keys(data).length) {
+                    // once /temp is driving the live reading, don't let the slower
+                    // 60s-loop data.json clobber it with a stale value
+                    if (this._liveTemp) { delete data.temperature; delete data.is_on; delete data.ac_temp; }
+                    this.state = { ...this.state, ...data };
                 }
+                this.connected = true;
+                const d = new Date();
+                this.lastUpdated = '· ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+                this.$nextTick(() => this.icons());
+            } catch (e) {
+                this.connected = false;
+                console.error('fetchState', e);
             }
         },
-        x: {
-            type: 'time',
-            min: objs[0].time,
-            max: objs[objs.length - 1].time,
-            title: {
-                display: true,
-                text: 'Time'
-            }
-        }
 
-    };
-
-    if (!window.chart) {
-        const chart = new Chart(ctx, {
-            type: 'scatter',
-            data: dataForChart,
-            options: {
-                 maintainAspectRatio: false,
-                // maintainAspectRatio: isSmallScreen ? false : true,
-                responsive: true,
-                scales: !isLandscpe ? scales : { x: scales.y, y: scales.x },
-                plugins: {
-                    title: {
-                        display: true,
-                        text: 'AYAL AC Status'
-                    },
-                    legend: {
-                        display: false
-                    }
+        // Fresh room temp straight from the cloud, independent of the poll loop.
+        async fetchLiveTemp() {
+            try {
+                const res = await fetch('/temp', { cache: 'no-store' });
+                const j = await res.json();
+                if (j && j.status === 'ok') {
+                    this.state.temperature = j.temperature;
+                    this.state.is_on = j.is_on;
+                    this.state.ac_temp = j.ac_temp;
+                    this._liveTemp = true;
+                    this.tempFreshAt = Date.now();
+                    this.$nextTick(() => this.icons());
                 }
-            }
+            } catch (e) { /* fall back to data.json values */ }
+        },
 
-        });
-        window.chart = chart;
-    }
-    else {
-        console.log('Updating chart', dataForChart.datasets[0].data.length);
-        window.chart.data = dataForChart;
-        window.chart.options.scales = {
-            ...scales,
-        }
-        window.chart.update();
-    }
+        async postState() {
+            try {
+                await fetch('/data', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.state),
+                });
+                this.refreshLimitLines();
+            } catch (e) { console.error('postState', e); }
+        },
 
+        toggle(key) { this.state[key] = !this.state[key]; this.postState(); },
+        increment(key) { this.state[key] = Math.round((Number(this.state[key]) + 0.5) * 2) / 2; this.postState(); },
+        decrement(key) { this.state[key] = Math.round((Number(this.state[key]) - 0.5) * 2) / 2; this.postState(); },
+        // cooling setpoint = the AC target temperature used when it turns on (integer, 16-30°C)
+        setCool(delta) { this.state.cool_temp = Math.min(30, Math.max(16, (Number(this.state.cool_temp) || 26) + delta)); this.postState(); },
+
+        // --- polling loop heartbeat ---
+        setPollInterval(sec) { this.state.poll_interval = sec; this.postState(); },
+        get lastPollStr() {
+            const t = this.parseTs(this.state.last_poll);
+            if (!isFinite(t)) return '—';
+            const d = new Date(t);
+            return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+        },
+        get _nextPollMs() {
+            const t = this.parseTs(this.state.last_poll);
+            return isFinite(t) ? t + (Number(this.state.poll_interval) || 60) * 1000 : null;
+        },
+        get nextPollStr() {
+            if (this._nextPollMs === null) return '—';
+            const rem = Math.max(0, Math.round((this._nextPollMs - this.now) / 1000));
+            const m = Math.floor(rem / 60), s = rem % 60;
+            return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+        },
+        get pollProgress() {
+            const iv = (Number(this.state.poll_interval) || 60) * 1000;
+            if (this._nextPollMs === null || !iv) return 0;
+            return Math.max(0, Math.min(100, (iv - (this._nextPollMs - this.now)) / iv * 100));
+        },
+
+        // --- decision log ---
+        async fetchDecisions() {
+            try {
+                const res = await fetch('/static/decisions.json?_t=' + Date.now(), { cache: 'no-store' });
+                if (!res.ok) { this.decisions = []; return; }
+                const arr = await res.json();
+                this.decisions = Array.isArray(arr) ? arr.slice().reverse() : [];  // newest first
+            } catch (e) { /* file may not exist until the first poll */ }
+        },
+        decLabel(a) {
+            return ({ on: 'Turned on', off: 'Turned off', none: 'No change', skip: 'Already set',
+                      'auto-off': 'Auto off', offline: 'Offline', error: 'Error' })[a] || a;
+        },
+        decDot(a) {
+            return ({ on: 'bg-green-400', off: 'bg-sky-400', none: 'bg-slate-500', skip: 'bg-slate-600',
+                      'auto-off': 'bg-slate-600', offline: 'bg-red-400', error: 'bg-red-400' })[a] || 'bg-slate-500';
+        },
+        decText(a) {
+            if (a === 'on') return 'text-green-300';
+            if (a === 'off') return 'text-sky-300';
+            if (a === 'offline' || a === 'error') return 'text-red-300';
+            return 'text-slate-200';
+        },
+        decTime(t) {
+            const ms = this.parseTs(t);
+            if (!isFinite(ms)) return '';
+            const d = new Date(ms);
+            return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+        },
+
+        async control(action) {
+            this.busy = true;
+            try {
+                const url = action === 'on'
+                    ? `/control/on?temp=${this.setTemp}&fan=low&mode=cool`
+                    : '/control/off';
+                const res = await fetch(url);
+                const j = await res.json().catch(() => ({}));
+                this.toast(j.status === 'ok'
+                    ? (action === 'on' ? `AC on · ${this.setTemp}°C` : 'AC off')
+                    : 'Command failed');
+                setTimeout(() => this.fetchState(), 1500);
+            } catch (e) {
+                this.toast('Command failed');
+            } finally { this.busy = false; }
+        },
+
+        toast(msg) {
+            this.toastMsg = msg;
+            this.$nextTick(() => this.icons());
+            clearTimeout(this._t);
+            this._t = setTimeout(() => this.toastMsg = '', 3000);
+        },
+
+        setRange(n) { this.range = n; this.refreshChart(); },
+
+        // Robust timestamp parse. The CSV uses "YYYY-MM-DD HH:MM:SS.ffffff"
+        // (space-separated, 6 fractional digits) which browsers parse
+        // inconsistently via new Date() — so build it from components.
+        parseTs(s) {
+            if (!s) return NaN;
+            const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/);
+            if (!m) { const d = Date.parse(s); return isNaN(d) ? NaN : d; }
+            const ms = m[7] ? parseInt(m[7].slice(0, 3).padEnd(3, '0'), 10) : 0;
+            return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], ms).getTime();
+        },
+
+        /* ---------- chart ---------- */
+        initChart() {
+            const el = document.getElementById('chart');
+            if (!el || !window.echarts) return;
+            this.chart = echarts.init(el, null, { renderer: 'canvas' });
+            // Re-measure whenever the container resizes (fixes a too-narrow chart
+            // when ECharts initializes before the layout/fonts settle).
+            try { new ResizeObserver(() => this.chart && this.chart.resize()).observe(el); } catch (e) { }
+            setTimeout(() => this.chart && this.chart.resize(), 300);
+            this.chart.setOption({
+                backgroundColor: 'transparent',
+                grid: { left: 48, right: 18, top: 18, bottom: 36 },
+                tooltip: {
+                    trigger: 'axis',
+                    backgroundColor: 'rgba(15,21,43,0.95)',
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    textStyle: { color: '#e2e8f0', fontSize: 12 },
+                    formatter: (ps) => {
+                        if (!ps.length) return '';
+                        const d = new Date(ps[0].value[0]);
+                        const time = d.toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                        let temp = '--', on = null;
+                        ps.forEach(p => {
+                            if (p.seriesName === 'Temperature') temp = p.value[1]?.toFixed(1);
+                            if (p.seriesName === 'State' && p.value[2] !== undefined) on = p.value[2];
+                        });
+                        const badge = on === null ? '' : `<span style="color:${on ? '#4ade80' : '#94a3b8'}">● AC ${on ? 'on' : 'off'}</span>`;
+                        return `<div style="font-weight:600;margin-bottom:2px">${time}</div>${temp}°C &nbsp; ${badge}`;
+                    }
+                },
+                xAxis: {
+                    type: 'time',
+                    min: 'dataMin',
+                    max: 'dataMax',
+                    axisLine: { lineStyle: { color: 'rgba(255,255,255,0.15)' } },
+                    axisLabel: {
+                        color: '#94a3b8', hideOverlap: true,
+                        formatter: {
+                            day: '{dd}/{MM}', hour: '{HH}:{mm}', minute: '{HH}:{mm}',
+                            second: '{HH}:{mm}', none: '{HH}:{mm}',
+                        },
+                    },
+                    splitLine: { show: false },
+                },
+                yAxis: {
+                    type: 'value', scale: true,
+                    axisLabel: { color: '#94a3b8', formatter: '{value}°' },
+                    splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+                },
+                series: [
+                    {
+                        name: 'Temperature', type: 'line', smooth: true, showSymbol: false,
+                        lineStyle: { width: 2.5, color: '#38bdf8' },
+                        areaStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: 'rgba(56,189,248,0.35)' },
+                                { offset: 1, color: 'rgba(56,189,248,0.02)' },
+                            ])
+                        },
+                        data: [],
+                        markLine: {
+                            symbol: 'none', label: { color: '#cbd5e1', fontSize: 10, formatter: '{b}' },
+                            data: [
+                                { name: 'Upper', yAxis: this.state.too_hot_temp, lineStyle: { color: 'rgba(251,146,60,0.7)', type: 'dashed' } },
+                                { name: 'Lower', yAxis: this.state.too_cold_temp, lineStyle: { color: 'rgba(56,189,248,0.7)', type: 'dashed' } },
+                            ]
+                        },
+                        markArea: {
+                            silent: true, itemStyle: { color: 'rgba(34,197,94,0.06)' },
+                            data: [[{ yAxis: this.state.too_cold_temp }, { yAxis: this.state.too_hot_temp }]]
+                        },
+                    },
+                    {
+                        name: 'State', type: 'scatter', symbolSize: 6, data: [], z: 5,
+                        itemStyle: { color: (p) => (p.value[2] ? '#4ade80' : '#64748b') },
+                    },
+                ],
+            });
+        },
+
+        refreshLimitLines() {
+            if (!this.chart) return;
+            this.chart.setOption({
+                series: [{
+                    markLine: {
+                        symbol: 'none', label: { color: '#cbd5e1', fontSize: 10, formatter: '{b}' },
+                        data: [
+                            { name: 'Upper', yAxis: this.state.too_hot_temp, lineStyle: { color: 'rgba(251,146,60,0.7)', type: 'dashed' } },
+                            { name: 'Lower', yAxis: this.state.too_cold_temp, lineStyle: { color: 'rgba(56,189,248,0.7)', type: 'dashed' } },
+                        ]
+                    },
+                    markArea: {
+                        silent: true, itemStyle: { color: 'rgba(34,197,94,0.06)' },
+                        data: [[{ yAxis: this.state.too_cold_temp }, { yAxis: this.state.too_hot_temp }]]
+                    },
+                }]
+            });
+        },
+
+        async refreshChart() {
+            if (!this.chart) return;
+            try {
+                const res = await fetch('/history?_t=' + Date.now(), { cache: 'no-store' });
+                const csv = await res.text();
+                const lines = csv.split('\n');
+                let rows = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const v = lines[i].split(',');
+                    if (v.length < 3) continue;
+                    const t = this.parseTs(v[0]);
+                    const on = v[1]?.trim() === 'True';
+                    const temp = parseFloat(v[2]);
+                    if (!isFinite(t) || !isFinite(temp)) continue;
+                    rows.push([t, temp, on]);
+                }
+                if (this.range > 0 && rows.length) {
+                    const cutoff = rows[rows.length - 1][0] - this.range * 3600 * 1000;
+                    rows = rows.filter(r => r[0] >= cutoff);
+                }
+                this.chart.setOption({
+                    series: [
+                        { name: 'Temperature', data: rows.map(r => [r[0], r[1]]) },
+                        { name: 'State', data: rows.map(r => [r[0], r[1], r[2]]) },
+                    ],
+                });
+                this.refreshLimitLines();
+            } catch (e) { console.error('refreshChart', e); }
+        },
+    };
 }
-
-window.chart = null;
-
-(async () => {
-    await renderChart();
-    setInterval(async () => {
-        console.log('Refreshing chart');
-        await renderChart();
-    }, 30000);
-})();

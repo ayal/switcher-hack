@@ -340,6 +340,7 @@ class SwitcherBreezeRemote:
 
                     self._lookup_key_in_irset(key)
 
+        # print("building-command", key) 
         command = (
             self._ir_wave_map["".join(key)]["Para"]
             + "|"
@@ -365,8 +366,11 @@ class SwitcherBreezeRemote:
 
         mode = None
 
+        # print("resolving-capabilities")
+
         for wave in ir_set["IRWaveList"]:
             key = wave["Key"]
+            # print("cap-key", key)
             try:
                 mode = COMMAND_TO_MODE[key[0:2]]
                 if mode not in self._modes_features:

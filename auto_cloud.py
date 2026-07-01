@@ -1,0 +1,335 @@
+"""Cloud variant of auto.py — runs the same thermostat automation, but:
+
+  * reads the live AC state + room temperature from the Switcher CLOUD
+    (cloud_get_state), falling back to the LAN UDP broadcast only if the cloud
+    is unreachable, and
+  * controls the AC via the Switcher CLOUD (cloud_control), not the dead LAN API.
+
+Same threshold / force-state logic as auto.py. Because both reads and writes go
+through the cloud, this can run anywhere with internet — no LAN access needed.
+
+Usage:
+    python auto_cloud.py            # run the loop forever (controls the AC)
+    python auto_cloud.py --once     # run a single cycle then exit
+    python auto_cloud.py --dry      # decide + log but DON'T send any AC command
+"""
+
+import argparse
+import asyncio
+import csv
+import json
+import os
+import traceback
+from datetime import datetime, timedelta
+
+from aioswitcher.bridge import (
+    SwitcherBridge,
+    SWITCHER_UDP_PORT_TYPE2,
+    SWITCHER_UDP_PORT_TYPE2_NEW_VERSION,
+)
+from aioswitcher.device import DeviceState
+
+# Importing cloud_control loads .env (it calls load_dotenv at import time)
+from cloud_control import cloud_control, cloud_get_state
+
+CSV_FILE_PATH = "webapp/static/data.csv"
+DATA_JSON_PATH = "webapp/static/data.json"
+DECISIONS_PATH = "webapp/static/decisions.json"
+DEVICE_ID = os.environ.get("DEVICE_ID", "")  # from .env (gitignored)
+
+last_force_time = None
+force_cooldown_time = timedelta(minutes=5)
+
+
+def record_decision(action, reason, temp=None, state=None, target=None):
+    """Append one decision to a rolling log (last 40) the dashboard displays.
+
+    action: on | off | none | skip | auto-off | offline
+    """
+    rec = {
+        "t": datetime.now().isoformat(),
+        "action": action,
+        "reason": reason,
+        "temp": temp,
+        "on": (state == DeviceState.ON) if state is not None else None,
+        "target": target,
+    }
+    items = []
+    try:
+        with open(DECISIONS_PATH) as f:
+            items = json.load(f)
+    except Exception:
+        items = []
+    items.append(rec)
+    try:
+        with open(DECISIONS_PATH, "w") as f:
+            json.dump(items[-40:], f)
+    except Exception as e:
+        print("could not write decisions:", e)
+
+
+
+# ---- trend / force-state helpers (unchanged from auto.py) ----
+def read_last_n_rows(n=5):
+    if not os.path.exists(CSV_FILE_PATH):
+        return None
+    try:
+        with open(CSV_FILE_PATH, "r") as f:
+            reader = list(csv.reader(f))
+            if len(reader) < n:
+                return None
+            return reader[-n:]
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return None
+
+
+def has_state_changed(states):
+    return len(set(states)) > 1
+
+
+def determine_temp_trend(temps):
+    deltas = [temps[i] - temps[i - 1] for i in range(1, len(temps))]
+    rising_count = sum(d > 0 for d in deltas)
+    falling_count = sum(d < 0 for d in deltas)
+    if rising_count > falling_count:
+        return "rising"
+    elif falling_count > rising_count:
+        return "falling"
+    return "stable"
+
+
+def get_force_change(current_state, current_temp, last_force_time=None):
+    data = read_last_n_rows(5)
+    if not data or len(data) < 5:
+        return None
+    temperatures = [float(row[2]) for row in data]
+    states = [row[1].strip() == "True" for row in data]
+    if has_state_changed(states):
+        return None
+    if last_force_time and datetime.now() - last_force_time < force_cooldown_time:
+        return None
+    temp_trend = determine_temp_trend(temperatures)
+    print(f"Temperature trend: {temp_trend}", current_state, current_temp)
+    if current_state == DeviceState.OFF and temp_trend == "falling":
+        return DeviceState.OFF
+    if current_state == DeviceState.ON and temp_trend == "rising":
+        return DeviceState.ON
+    return None
+
+
+# ---- read live state from the UDP broadcast (replaces the dead LAN API) ----
+async def read_breeze_state(timeout=8):
+    """Listen briefly for our device's broadcast and return its state object."""
+    holder = {}
+    found = asyncio.Event()
+
+    def cb(device):
+        if getattr(device, "device_id", None) == DEVICE_ID and not found.is_set():
+            holder["device"] = device
+            found.set()
+
+    ports = [SWITCHER_UDP_PORT_TYPE2, SWITCHER_UDP_PORT_TYPE2_NEW_VERSION]
+    async with SwitcherBridge(cb, broadcast_ports=ports):
+        try:
+            await asyncio.wait_for(found.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass
+    return holder.get("device")
+
+
+# ---- one control cycle ----
+async def control_cycle(dry=False):
+    global last_force_time
+
+    data_json = {"auto": True, "too_hot_temp": 25, "too_cold_temp": 25,
+                 "cool_temp": 26, "poll_interval": 60}
+    try:
+        with open(DATA_JSON_PATH, "r") as f:
+            data_json = json.load(f)
+    except Exception as e:
+        print("error reading data file", e, "\n\nRESETTING DATA FILE")
+        with open(DATA_JSON_PATH, "w") as f:
+            json.dump(data_json, f)
+    # cooling setpoint the AC is set to when turned on (configurable via the UI)
+    data_json.setdefault("cool_temp", 26)
+
+    # Get current state from the CLOUD (works off-LAN). Fall back to the LAN
+    # UDP broadcast only if the cloud is unreachable.
+    st = await cloud_get_state()
+    source = "cloud"
+    if st is None:
+        dev = await read_breeze_state()
+        if dev is None:
+            print("Could not read device state (cloud + LAN both failed); skipping.")
+            record_decision("offline", "no state from cloud or LAN")
+            return
+        st = {"temperature": dev.temperature, "state": dev.device_state,
+              "target_temperature": dev.target_temperature}
+        source = "lan-broadcast"
+
+    state = st["state"]
+    the_temp = st["temperature"]
+    cur_target = st["target_temperature"]
+
+    turn_on_ac_temp = int(data_json.get("cool_temp", 26))
+    hot_temp_delta = round(the_temp - data_json["too_hot_temp"], 3)
+    cold_temp_delta = round(data_json["too_cold_temp"] - the_temp, 3)
+
+    # Fan is always LOW: changing fan is a separate IR command (a beep), and the
+    # cloud's fan reading is unreliable, so we never touch it. Still nudge the
+    # target setpoint down when the room is well above the limit (cool harder).
+    if hot_temp_delta > 1:
+        turn_on_ac_temp -= 1
+    if hot_temp_delta > 2:
+        turn_on_ac_temp -= 1
+
+    room_too_hot = the_temp > data_json["too_hot_temp"]
+    room_too_cold = the_temp < data_json["too_cold_temp"]
+
+    if room_too_hot:
+        reason = f"{the_temp}° above upper limit {data_json['too_hot_temp']}°"
+    elif room_too_cold:
+        reason = f"{the_temp}° below lower limit {data_json['too_cold_temp']}°"
+    else:
+        reason = f"{the_temp}° within {data_json['too_cold_temp']}–{data_json['too_hot_temp']}°"
+
+    device_is_on = state == DeviceState.ON
+    device_is_off = state == DeviceState.OFF
+
+    force_state = get_force_change(state, the_temp, last_force_time)
+    if force_state is not None:
+        last_force_time = datetime.now()
+        print("*** Forcing state change - room is >>>",
+              "TOO HOT" if room_too_hot else "TOO COLD", "<<< ***")
+
+    new_state = state
+    if room_too_hot and device_is_off:
+        new_state = DeviceState.ON
+    if room_too_cold and device_is_on:
+        new_state = DeviceState.OFF
+
+    # Fan is NOT used as a change trigger: the cloud's fan view is unreliable
+    # for this open-loop IR device, so comparing it would cause phantom re-sends.
+    ac_temp_change = turn_on_ac_temp != cur_target
+    state_change = new_state != state
+    off_to_off = state == DeviceState.OFF and new_state == DeviceState.OFF
+
+    should_change = (ac_temp_change or state_change) and not off_to_off
+    should_force = force_state is not None
+
+    print("\n--- cycle", datetime.now(), "---")
+    print("AUTO MODE:", data_json.get("auto", False))
+    print(f"[{source}] State: {state}  RoomTemp: {the_temp}  AC target: {cur_target}")
+    print(f"limits  hot>{data_json['too_hot_temp']}  cold<{data_json['too_cold_temp']}  "
+          f"(too_hot={room_too_hot} too_cold={room_too_cold})")
+    print(f"decide -> new_state={new_state}  ac_temp={turn_on_ac_temp}  fan=low")
+    print(f"should_change={should_change} should_force={should_force} force_state={force_state}")
+
+    # log to CSV + data.json (drives the dashboard + the trend logic)
+    with open(CSV_FILE_PATH, "a") as f:
+        f.write(f"{datetime.now()}, {state == DeviceState.ON}, {the_temp}\n")
+    data_json["is_on"] = state == DeviceState.ON
+    data_json["temperature"] = the_temp
+    data_json["ac_temp"] = cur_target
+    with open(DATA_JSON_PATH, "w") as f:
+        json.dump(data_json, f)
+
+    if not data_json.get("auto", False):
+        print("Auto mode OFF — not changing anything.")
+        record_decision("auto-off", "auto mode off", the_temp, state, cur_target)
+        return
+
+    if not (should_change or should_force):
+        print("No change needed.")
+        record_decision("none", reason, the_temp, state, cur_target)
+        return
+
+    target = force_state if force_state is not None else new_state
+
+    # Idempotency guard: never re-send a command the device already satisfies.
+    # The Switcher is an IR blaster, so a redundant command just makes the AC
+    # beep with no visible effect. (The force-state re-assert always echoes the
+    # current reported state, so without this guard it fires phantom on/off
+    # commands every time the temperature merely drifts up/down.)
+    already_off = target == DeviceState.OFF and state == DeviceState.OFF
+    already_on_same = (
+        target == DeviceState.ON
+        and state == DeviceState.ON
+        and cur_target == turn_on_ac_temp
+    )
+    if already_off or already_on_same:
+        print("Device already in desired state — skipping command (no beep).")
+        record_decision("skip", "already " + ("on" if device_is_on else "off"),
+                        the_temp, state, cur_target)
+        return
+
+    if dry:
+        print(f"[DRY] would send: {'ON ' + str(turn_on_ac_temp) + 'C low' if target == DeviceState.ON else 'OFF'}")
+        return
+
+    forced = " (forced)" if (should_force and not should_change) else ""
+    try:
+        if target == DeviceState.ON:
+            await cloud_control("on", temp=turn_on_ac_temp, fan="low", mode="cool")
+            record_decision("on", reason + forced, the_temp, DeviceState.ON, turn_on_ac_temp)
+        else:
+            await cloud_control("off")
+            record_decision("off", reason + forced, the_temp, DeviceState.OFF, cur_target)
+    except Exception as e:
+        print("Error controlling via cloud:", e)
+        traceback.print_exc()
+        record_decision("error", str(e)[:80], the_temp, state, cur_target)
+
+
+def update_poll_meta():
+    """Record this poll's time and return the (clamped) poll interval in seconds.
+
+    Reads `poll_interval` from data.json (configurable from the dashboard,
+    default 60s, clamped 10s-1h) and stamps `last_poll` so the UI can show the
+    heartbeat and count down to the next run.
+    """
+    data = {}
+    try:
+        with open(DATA_JSON_PATH) as f:
+            data = json.load(f)
+    except Exception:
+        pass
+    try:
+        interval = int(data.get("poll_interval", 60))
+    except (TypeError, ValueError):
+        interval = 60
+    interval = max(10, min(3600, interval))
+    data["poll_interval"] = interval
+    data["last_poll"] = datetime.now().isoformat()
+    try:
+        with open(DATA_JSON_PATH, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print("could not write poll meta:", e)
+    return interval
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="Cloud-based AC thermostat loop")
+    parser.add_argument("--once", action="store_true", help="run one cycle then exit")
+    parser.add_argument("--dry", action="store_true", help="don't actually send AC commands")
+    args = parser.parse_args()
+
+    print("starting cloud climate control...", "(dry run)" if args.dry else "")
+    if args.once:
+        await control_cycle(dry=args.dry)
+        return
+    while True:
+        try:
+            await control_cycle(dry=args.dry)
+        except Exception as e:
+            print(f"General Error: {e}")
+            traceback.print_exc()
+        interval = update_poll_meta()
+        print(f"next poll in {interval}s")
+        await asyncio.sleep(interval)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
