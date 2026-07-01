@@ -15,6 +15,7 @@ function dashboard() {
         toastMsg: '',
         setTemp: 24,
         now: Date.now(),
+        tempFreshAt: 0,
         pollOptions: [{ s: 30, label: '30s' }, { s: 60, label: '1m' }, { s: 120, label: '2m' }, { s: 300, label: '5m' }],
         decisions: [],
         range: 24, // hours; 0 = all
@@ -23,10 +24,12 @@ function dashboard() {
 
         init() {
             this.fetchState();
+            this.fetchLiveTemp();
             this.initChart();
             this.refreshChart();
             this.fetchDecisions();
             setInterval(() => this.fetchState(), 5000);
+            setInterval(() => this.fetchLiveTemp(), 15000);  // near-live room temp from the cloud
             setInterval(() => this.refreshChart(), 30000);
             setInterval(() => this.fetchDecisions(), 10000);
             setInterval(() => { this.now = Date.now(); }, 1000);  // drives the poll countdown
@@ -54,12 +57,18 @@ function dashboard() {
             if (t < Number(this.state.too_cold_temp)) return 'text-sky-300';
             return 'text-green-300';
         },
+        get tempLive() { return this.now - this.tempFreshAt < 20000; },
 
         async fetchState() {
             try {
                 const res = await fetch('/data', { cache: 'no-store' });
                 const data = await res.json();
-                if (data && Object.keys(data).length) this.state = { ...this.state, ...data };
+                if (data && Object.keys(data).length) {
+                    // once /temp is driving the live reading, don't let the slower
+                    // 60s-loop data.json clobber it with a stale value
+                    if (this._liveTemp) { delete data.temperature; delete data.is_on; delete data.ac_temp; }
+                    this.state = { ...this.state, ...data };
+                }
                 this.connected = true;
                 const d = new Date();
                 this.lastUpdated = '· ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
@@ -68,6 +77,22 @@ function dashboard() {
                 this.connected = false;
                 console.error('fetchState', e);
             }
+        },
+
+        // Fresh room temp straight from the cloud, independent of the poll loop.
+        async fetchLiveTemp() {
+            try {
+                const res = await fetch('/temp', { cache: 'no-store' });
+                const j = await res.json();
+                if (j && j.status === 'ok') {
+                    this.state.temperature = j.temperature;
+                    this.state.is_on = j.is_on;
+                    this.state.ac_temp = j.ac_temp;
+                    this._liveTemp = true;
+                    this.tempFreshAt = Date.now();
+                    this.$nextTick(() => this.icons());
+                }
+            } catch (e) { /* fall back to data.json values */ }
         },
 
         async postState() {

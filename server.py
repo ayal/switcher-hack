@@ -18,7 +18,8 @@ from fastapi import Request
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from cloud_control import cloud_control
+from cloud_control import cloud_control, cloud_get_state
+from aioswitcher.device import DeviceState
 
 app = FastAPI(title="Switcher AC Cloud Control")
 
@@ -30,6 +31,23 @@ async def add_cache_control_header(request: Request, call_next):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+# --- Live reading (fresh from the cloud, independent of the control loop) ---
+
+@app.get("/temp")
+async def live_temp():
+    """Fetch the current room temp straight from the cloud on demand, so the
+    dashboard can show a near-live reading without waiting for the poll loop."""
+    st = await cloud_get_state()
+    if not st:
+        return {"status": "error"}
+    return {
+        "status": "ok",
+        "temperature": st["temperature"],
+        "is_on": st["state"] == DeviceState.ON,
+        "ac_temp": st["target_temperature"],
+    }
 
 
 # --- AC Control (cloud) ---

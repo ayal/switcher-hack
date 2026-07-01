@@ -78,6 +78,9 @@
             <div class="glass rounded-3xl p-5">
                 <div class="flex items-center gap-2 text-slate-400 text-sm">
                     <i data-lucide="thermometer" class="w-4 h-4"></i> Room temperature
+                    <span class="ml-auto flex items-center gap-1 text-[10px] font-medium text-green-300" x-show="tempLive">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-400 pulse"></span> live
+                    </span>
                 </div>
                 <div class="mt-3 flex items-end gap-1">
                     <span class="text-5xl font-extrabold tabular-nums" x-text="fmt(state.temperature)"></span>
@@ -283,7 +286,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=12" type="text/javascript"></script>
+    <script src="static/index.js?v=13" type="text/javascript"></script>
 </body>
 
 </html>
