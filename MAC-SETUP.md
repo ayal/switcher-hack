@@ -55,14 +55,16 @@ curl -X POST localhost:3001/api/config -d '{"mode":"thermostat"}'
 A future mobile app just calls these same endpoints (the server already binds
 `0.0.0.0:3001`, so it's reachable on the LAN).
 
-## Menu-bar app
+## Menu-bar widget (native)
 
-`menubar.py` (rumps) shows the room temp + a ❄ when the AC is on, with a
-dropdown to switch mode, flip on/off, and open the dashboard. It reads/writes
-the same server, so it stays in sync with the webapp.
+`menubar.py` is a **native AppKit** app (via PyObjC — no HTML): an `NSStatusItem`
+showing the room temp (+ ❄ when on), whose click opens an `NSPopover` built from
+real controls — a power button, a Manual/Auto/Cycle `NSSegmentedControl`, a
+target-temp `NSSlider`, and on/off `NSStepper`s with a live phase countdown in
+cycle mode. It reads/writes the same server, so it stays in sync with the webapp.
 
 ```bash
-.venv/bin/pip install -r requirements-mac.txt   # fastapi/uvicorn/requests/rumps
+.venv/bin/pip install -r requirements-mac.txt   # fastapi/uvicorn/requests/pyobjc
 .venv/bin/python menubar.py                      # run once, foreground
 ```
 

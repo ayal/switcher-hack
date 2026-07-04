@@ -1,174 +1,395 @@
-"""macOS menu-bar app for the Switcher AC — a thin client of the local server.
+"""Native macOS menu-bar widget for the Switcher AC.
 
-Shows the room temperature (and a ❄ when the AC is on) in the menu bar, and a
-dropdown to switch mode, flip the AC on/off, and open the dashboard. It reads
-and writes the SAME backend as the web dashboard (http://localhost:3001), so
-the two are always in sync — change the mode here and the webapp reflects it,
-and vice-versa.
+An NSStatusItem showing the room temp (+ ❄ when on), whose click opens a native
+NSPopover built from real AppKit controls — a power button, a Manual/Auto/Cycle
+segmented control, a target-temperature slider, and (in cycle mode) on/off
+steppers with a live phase countdown. No HTML: this is genuine AppKit, the same
+control family as macOS Control Center.
 
-Run:   .venv/bin/python menubar.py     (needs `pip install rumps requests`)
+It's a thin client of the local server (http://127.0.0.1:3001), so it stays in
+sync with the web dashboard — change something here and the dashboard reflects
+it, and vice-versa.
+
+Run:   .venv/bin/python menubar.py      (needs pyobjc + requests)
 Autostart is handled by the launchd agent — see daemon/.
 """
 
+import json
+import threading
+import time
 import webbrowser
+from datetime import datetime
 
+import objc
 import requests
-import rumps
 
-BASE = "http://localhost:3001"
-TIMEOUT = 2.5           # keep the main thread responsive if the server is slow
-REFRESH_SECONDS = 8
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSBezelStyleRounded,
+    NSColor,
+    NSFont,
+    NSPopover,
+    NSPopoverBehaviorTransient,
+    NSSegmentedControl,
+    NSSegmentStyleRounded,
+    NSSegmentSwitchTrackingSelectOne,
+    NSSlider,
+    NSStatusBar,
+    NSStepper,
+    NSTextAlignmentRight,
+    NSTextField,
+    NSVariableStatusItemLength,
+    NSView,
+    NSViewController,
+    NSButton,
+)
+from Foundation import NSMakeRect, NSObject
+from PyObjCTools import AppHelper
 
-MODE_LABELS = {
-    "manual": "Manual",
-    "thermostat": "Thermostat (auto)",
-    "cycle": "Cycle timer",
-}
+try:
+    from AppKit import NSMinYEdge as _EDGE
+except Exception:  # pragma: no cover - constant name fallback
+    _EDGE = 1
+
+API = "http://127.0.0.1:3001"
+W = 300           # popover width
+P = 16            # padding
+MANUAL_H = 250    # popover height for manual/thermostat
+CYCLE_H = 340     # popover height for cycle mode
+MODE_ORDER = ["manual", "thermostat", "cycle"]
+MODE_INDEX = {m: i for i, m in enumerate(MODE_ORDER)}
 
 
-class ACMenuBar(rumps.App):
-    def __init__(self):
-        super().__init__("AC", title="AC …", quit_button="Quit")
+class FlippedView(NSView):
+    """Top-left origin so we can lay out with y growing downward."""
+    def isFlipped(self):
+        return True
 
-        self.status_item = rumps.MenuItem("Loading…")
-        self.detail_item = rumps.MenuItem("")
 
-        # Mode submenu, one checkable item per mode.
-        self.mode_items = {
-            key: rumps.MenuItem(label, callback=self._make_set_mode(key))
-            for key, label in MODE_LABELS.items()
-        }
-        mode_menu = rumps.MenuItem("Mode")
-        for item in self.mode_items.values():
-            mode_menu.add(item)
+def _safe(fn):
+    try:
+        fn()
+    except Exception:
+        pass
 
-        # Target temperature submenu (the cool_temp setpoint used when the AC
-        # turns on / cycles). One checkable item per °C across the valid range.
-        self.temp_items = {
-            t: rumps.MenuItem(f"{t}°C", callback=self._make_set_temp(t))
-            for t in range(16, 31)
-        }
-        target_menu = rumps.MenuItem("Target temp")
-        for item in self.temp_items.values():
-            target_menu.add(item)
 
-        self.on_item = rumps.MenuItem("Turn On", callback=self.turn_on)
-        self.off_item = rumps.MenuItem("Turn Off", callback=self.turn_off)
+def _countdown(iso):
+    if not iso:
+        return "—"
+    try:
+        rem = max(0, int((datetime.fromisoformat(iso) - datetime.now()).total_seconds()))
+    except Exception:
+        return "—"
+    m, s = divmod(rem, 60)
+    return "%d:%02d" % (m, s) if m else "%ds" % s
 
-        self.menu = [
-            self.status_item,
-            self.detail_item,
-            None,
-            mode_menu,
-            target_menu,
-            None,
-            self.on_item,
-            self.off_item,
-            None,
-            rumps.MenuItem("Open Dashboard", callback=self.open_dashboard),
-            None,
-        ]
 
-        self._timer = rumps.Timer(self.refresh, REFRESH_SECONDS)
-        self._timer.start()
-        self.refresh(None)
+def _label(frame, text, size=13, bold=False, secondary=False, right=False):
+    f = NSTextField.alloc().initWithFrame_(NSMakeRect(*frame))
+    f.setStringValue_(text)
+    f.setBezeled_(False)
+    f.setDrawsBackground_(False)
+    f.setEditable_(False)
+    f.setSelectable_(False)
+    f.setFont_(NSFont.boldSystemFontOfSize_(size) if bold else NSFont.systemFontOfSize_(size))
+    if secondary:
+        f.setTextColor_(NSColor.secondaryLabelColor())
+    if right:
+        f.setAlignment_(NSTextAlignmentRight)
+    return f
 
-    # ---- backend helpers ----
-    def _get_state(self):
-        try:
-            return requests.get(f"{BASE}/api/state", timeout=TIMEOUT).json()
-        except Exception:
-            return None
 
+class ACDelegate(NSObject):
+    def applicationDidFinishLaunching_(self, notification):
+        self._is_on = False
+        self._cur_mode = None
+
+        # --- status-bar item ---
+        self.statusItem = NSStatusBar.systemStatusBar().statusItemWithLength_(
+            NSVariableStatusItemLength)
+        btn = self.statusItem.button()
+        btn.setTitle_("AC …")
+        btn.setTarget_(self)
+        btn.setAction_("statusClicked:")
+
+        # --- popover + root view ---
+        self.root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, W, MANUAL_H))
+        self._build_controls()
+
+        vc = NSViewController.alloc().init()
+        vc.setView_(self.root)
+        self.popover = NSPopover.alloc().init()
+        self.popover.setContentViewController_(vc)
+        self.popover.setBehavior_(NSPopoverBehaviorTransient)
+        self.popover.setAnimates_(True)
+        self.popover.setContentSize_((W, MANUAL_H))
+
+        # --- periodic refresh ---
+        self.refresh_(None)
+        AppHelper.callLater(0.1, self._start_timer)
+
+    @objc.python_method
+    def _start_timer(self):
+        from Foundation import NSTimer
+        self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            6.0, self, "refresh:", None, True)
+
+    # ------------------------------------------------------------------ build
+    @objc.python_method
+    def _build_controls(self):
+        r = self.root
+        self.titleLabel = _label((P, 12, 150, 20), "AYAL AC", size=15, bold=True)
+        r.addSubview_(self.titleLabel)
+        self.tempLabel = _label((W - 120 - P, 8, 120, 28), "--°", size=22, bold=True, right=True)
+        r.addSubview_(self.tempLabel)
+
+        self.powerBtn = NSButton.alloc().initWithFrame_(NSMakeRect(P, 44, W - 2 * P, 40))
+        self.powerBtn.setBezelStyle_(NSBezelStyleRounded)
+        self.powerBtn.setTitle_("Turn On")
+        self.powerBtn.setTarget_(self)
+        self.powerBtn.setAction_("powerClicked:")
+        r.addSubview_(self.powerBtn)
+
+        self.statusLabel = _label((P, 88, W - 2 * P, 16), "…", size=11, secondary=True)
+        r.addSubview_(self.statusLabel)
+
+        self.modeSeg = NSSegmentedControl.alloc().initWithFrame_(NSMakeRect(P, 110, W - 2 * P, 26))
+        self.modeSeg.setSegmentStyle_(NSSegmentStyleRounded)
+        self.modeSeg.setSegmentCount_(3)
+        self.modeSeg.setTrackingMode_(NSSegmentSwitchTrackingSelectOne)
+        for i, lbl in enumerate(["Manual", "Auto", "Cycle"]):
+            self.modeSeg.setLabel_forSegment_(lbl, i)
+        self.modeSeg.setTarget_(self)
+        self.modeSeg.setAction_("modeChanged:")
+        r.addSubview_(self.modeSeg)
+
+        r.addSubview_(_label((P, 148, 80, 16), "Target", size=12, secondary=True))
+        self.targetValue = _label((W - 80 - P, 148, 80, 16), "--°C", size=12, bold=True, right=True)
+        r.addSubview_(self.targetValue)
+        self.targetSlider = NSSlider.alloc().initWithFrame_(NSMakeRect(P, 168, W - 2 * P, 24))
+        self.targetSlider.setMinValue_(16)
+        self.targetSlider.setMaxValue_(30)
+        self.targetSlider.setNumberOfTickMarks_(15)
+        self.targetSlider.setAllowsTickMarkValuesOnly_(True)
+        self.targetSlider.setContinuous_(True)
+        self.targetSlider.setTarget_(self)
+        self.targetSlider.setAction_("targetChanged:")
+        r.addSubview_(self.targetSlider)
+
+        # --- cycle-only controls (hidden unless mode == cycle) ---
+        self.cycleStatus = _label((P, 204, W - 2 * P, 16), "", size=12, secondary=True)
+        r.addSubview_(self.cycleStatus)
+        r.addSubview_(self._cycle_row_label((P, 230), "On"))
+        self.onValue = _label((P + 34, 230, 44, 18), "5m", size=12, bold=True)
+        r.addSubview_(self.onValue)
+        self.onStepper = self._stepper((P + 80, 226), "onStepperChanged:")
+        r.addSubview_(self.onStepper)
+        r.addSubview_(self._cycle_row_label((P + 130, 230), "Off"))
+        self.offValue = _label((P + 168, 230, 44, 18), "25m", size=12, bold=True)
+        r.addSubview_(self.offValue)
+        self.offStepper = self._stepper((W - P - 19, 226), "offStepperChanged:")
+        r.addSubview_(self.offStepper)
+        self.cycleControls = [self.cycleStatus, self.onValue, self.onStepper,
+                              self.offValue, self.offStepper]
+        # self._cycle_static holds the "On"/"Off" text labels (populated by
+        # _cycle_row_label above); they hide/show with the rest of cycle mode.
+
+        # --- footer ---
+        self.dashBtn = NSButton.alloc().initWithFrame_(NSMakeRect(P, MANUAL_H - 34, 130, 24))
+        self.dashBtn.setBezelStyle_(NSBezelStyleRounded)
+        self.dashBtn.setTitle_("Dashboard")
+        self.dashBtn.setTarget_(self)
+        self.dashBtn.setAction_("openDashboard:")
+        r.addSubview_(self.dashBtn)
+        self.quitBtn = NSButton.alloc().initWithFrame_(NSMakeRect(W - P - 84, MANUAL_H - 34, 84, 24))
+        self.quitBtn.setBezelStyle_(NSBezelStyleRounded)
+        self.quitBtn.setTitle_("Quit")
+        self.quitBtn.setTarget_(self)
+        self.quitBtn.setAction_("quitClicked:")
+        r.addSubview_(self.quitBtn)
+
+        self._last_user_target = 0.0
+
+    @objc.python_method
+    def _cycle_row_label(self, origin, text):
+        lbl = _label((origin[0], origin[1], 30, 18), text, size=12, secondary=True)
+        # remember these so they hide/show with the rest of the cycle controls
+        if not hasattr(self, "_cycle_static"):
+            self._cycle_static = []
+        self._cycle_static.append(lbl)
+        return lbl
+
+    @objc.python_method
+    def _stepper(self, origin, action):
+        st = NSStepper.alloc().initWithFrame_(NSMakeRect(origin[0], origin[1], 19, 27))
+        st.setMinValue_(1)
+        st.setMaxValue_(240)
+        st.setIncrement_(1)
+        st.setValueWraps_(False)
+        st.setTarget_(self)
+        st.setAction_(action)
+        return st
+
+    # ------------------------------------------------------------- networking
+    @objc.python_method
+    def _bg(self, fn):
+        threading.Thread(target=fn, daemon=True).start()
+
+    @objc.python_method
     def _post_config(self, patch):
-        try:
-            requests.post(f"{BASE}/api/config", json=patch, timeout=TIMEOUT)
-        except Exception:
-            pass
+        self._bg(lambda: _safe(lambda: requests.post(API + "/api/config", json=patch, timeout=3)))
 
+    @objc.python_method
     def _control(self, action, params=None):
+        self._bg(lambda: _safe(lambda: requests.get(API + "/control/" + action, params=params or {}, timeout=8)))
+
+    # ------------------------------------------------------------- UI actions
+    def statusClicked_(self, sender):
+        if self.popover.isShown():
+            self.popover.performClose_(sender)
+        else:
+            btn = self.statusItem.button()
+            self.popover.showRelativeToRect_ofView_preferredEdge_(btn.bounds(), btn, _EDGE)
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            self.refresh_(None)
+
+    def powerClicked_(self, sender):
+        if self._is_on:
+            self._control("off")
+        else:
+            v = int(round(self.targetSlider.doubleValue())) or 26
+            self._control("on", {"temp": v, "fan": "low", "mode": "cool"})
+        self.performSelector_withObject_afterDelay_("refresh:", None, 1.3)
+
+    def modeChanged_(self, sender):
+        m = MODE_ORDER[sender.selectedSegment()]
+        self._cur_mode = m
+        self._apply_mode(m)
+        self._post_config({"mode": m})
+        self.performSelector_withObject_afterDelay_("refresh:", None, 1.0)
+
+    def targetChanged_(self, sender):
+        v = int(round(sender.doubleValue()))
+        self.targetValue.setStringValue_("%d°C" % v)
+        self._last_user_target = time.time()
+        NSObject.cancelPreviousPerformRequestsWithTarget_selector_object_(self, "commitTarget:", None)
+        self.performSelector_withObject_afterDelay_("commitTarget:", None, 0.4)
+
+    def commitTarget_(self, _):
+        v = int(round(self.targetSlider.doubleValue()))
+        self._post_config({"cool_temp": v})
+        self._bg(lambda: self._reapply_if_on(v))
+
+    @objc.python_method
+    def _reapply_if_on(self, v):
         try:
-            requests.get(f"{BASE}/control/{action}", params=params or {}, timeout=TIMEOUT + 5)
+            st = requests.get(API + "/api/state", timeout=2).json()
+            if st.get("is_on"):
+                requests.get(API + "/control/on",
+                             params={"temp": v, "fan": "low", "mode": "cool"}, timeout=8)
         except Exception:
             pass
 
-    # ---- callbacks ----
-    def _make_set_mode(self, key):
-        def cb(_):
-            self._post_config({"mode": key})
-            self.refresh(None)
-        return cb
+    def onStepperChanged_(self, sender):
+        v = int(sender.doubleValue())
+        self.onValue.setStringValue_("%dm" % v)
+        self._post_config({"cycle_on_min": v})
 
-    def _make_set_temp(self, temp):
-        def cb(_):
-            self._post_config({"cool_temp": temp})
-            # If the AC is on right now, re-apply immediately so the new target
-            # takes effect without waiting for the next loop tick.
-            st = self._get_state() or {}
-            if st.get("is_on"):
-                self._control("on", {"temp": temp, "fan": "low", "mode": "cool"})
-            self.refresh(None)
-        return cb
+    def offStepperChanged_(self, sender):
+        v = int(sender.doubleValue())
+        self.offValue.setStringValue_("%dm" % v)
+        self._post_config({"cycle_off_min": v})
 
-    def turn_on(self, _):
-        st = self._get_state() or {}
-        cool = int(st.get("cool_temp", 26))
-        self._control("on", {"temp": cool, "fan": "low", "mode": "cool"})
-        self.refresh(None)
+    def openDashboard_(self, sender):
+        webbrowser.open(API)
 
-    def turn_off(self, _):
-        self._control("off")
-        self.refresh(None)
+    def quitClicked_(self, sender):
+        NSApplication.sharedApplication().terminate_(self)
 
-    def open_dashboard(self, _):
-        webbrowser.open(BASE)
+    # ------------------------------------------------------------- refresh
+    def refresh_(self, _timer):
+        self._bg(self._poll)
 
-    # ---- periodic UI refresh ----
-    def refresh(self, _):
-        st = self._get_state()
+    @objc.python_method
+    def _poll(self):
+        try:
+            s = requests.get(API + "/api/state", timeout=2).text
+        except Exception:
+            s = ""
+        self.performSelectorOnMainThread_withObject_waitUntilDone_("applyState:", s, False)
+
+    @objc.python_method
+    def _apply_mode(self, mode):
+        """Show/hide cycle controls and resize the popover to fit."""
+        is_cycle = mode == "cycle"
+        for c in self.cycleControls + getattr(self, "_cycle_static", []):
+            c.setHidden_(not is_cycle)
+        h = CYCLE_H if is_cycle else MANUAL_H
+        self.root.setFrameSize_((W, h))
+        self.popover.setContentSize_((W, h))
+        fy = h - 34
+        self.dashBtn.setFrameOrigin_((P, fy))
+        self.quitBtn.setFrameOrigin_((W - P - 84, fy))
+
+    def applyState_(self, s):
+        try:
+            st = json.loads(str(s)) if s else None
+        except Exception:
+            st = None
+
         if st is None:
-            self.title = "AC ⚠"
-            self.status_item.title = "Server offline"
-            self.detail_item.title = f"(no response from {BASE})"
-            for item in self.mode_items.values():
-                item.state = 0
+            self.statusItem.button().setTitle_("AC ⚠")
+            self.statusLabel.setStringValue_("Server offline")
             return
 
         temp = st.get("temperature")
-        is_on = bool(st.get("is_on"))
+        self._is_on = bool(st.get("is_on"))
         mode = st.get("mode", "manual")
+        temp_str = "%.1f°" % float(temp) if isinstance(temp, (int, float)) else "--°"
 
-        temp_str = f"{float(temp):.1f}°" if isinstance(temp, (int, float)) else "--°"
-        self.title = f"{temp_str} ❄" if is_on else temp_str
+        # menu-bar title
+        self.statusItem.button().setTitle_(temp_str + " ❄" if self._is_on else temp_str)
+        self.tempLabel.setStringValue_(temp_str)
 
+        # power + status line
+        self.powerBtn.setTitle_("Turn Off" if self._is_on else "Turn On")
         target = st.get("ac_temp")
-        self.status_item.title = (
-            f"AC ON · target {int(target)}°C" if (is_on and target is not None)
-            else ("AC ON" if is_on else "AC OFF")
-        )
+        if self._is_on and target is not None:
+            self.statusLabel.setStringValue_("AC ON · target %d°C" % int(target))
+        else:
+            self.statusLabel.setStringValue_("AC OFF")
 
-        # Second line depends on the active mode.
+        # mode + layout
+        self.modeSeg.setSelectedSegment_(MODE_INDEX.get(mode, 0))
+        if mode != self._cur_mode:
+            self._cur_mode = mode
+            self._apply_mode(mode)
+
+        # inputs: only sync when the popover is closed (don't fight the user),
+        # except a short grace window after the user last moved the slider
+        can_sync_inputs = (not self.popover.isShown()) or (time.time() - self._last_user_target > 3)
+        cool = st.get("cool_temp")
+        if can_sync_inputs and isinstance(cool, (int, float)):
+            self.targetSlider.setDoubleValue_(float(cool))
+            self.targetValue.setStringValue_("%d°C" % int(cool))
+
         if mode == "cycle":
             phase = "Cooling" if st.get("cycle_phase") == "on" else "Idle"
-            self.detail_item.title = (
-                f"Cycle · {phase} · "
-                f"{int(st.get('cycle_on_min', 5))}m on / {int(st.get('cycle_off_min', 25))}m off"
-            )
-        elif mode == "thermostat":
-            self.detail_item.title = (
-                f"Thermostat · {st.get('too_cold_temp')}–{st.get('too_hot_temp')}°C · "
-                f"room {temp_str}"
-            )
-        else:
-            self.detail_item.title = f"Manual · room {temp_str}"
-
-        for key, item in self.mode_items.items():
-            item.state = 1 if key == mode else 0
-
-        cool = st.get("cool_temp")
-        for t, item in self.temp_items.items():
-            item.state = 1 if t == cool else 0
+            self.cycleStatus.setStringValue_(
+                "Cycle · %s · switches in %s" % (phase, _countdown(st.get("cycle_phase_until"))))
+            on_m = int(st.get("cycle_on_min", 5))
+            off_m = int(st.get("cycle_off_min", 25))
+            self.onValue.setStringValue_("%dm" % on_m)
+            self.offValue.setStringValue_("%dm" % off_m)
+            if not self.popover.isShown():
+                self.onStepper.setDoubleValue_(on_m)
+                self.offStepper.setDoubleValue_(off_m)
 
 
 if __name__ == "__main__":
-    ACMenuBar().run()
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    delegate = ACDelegate.alloc().init()
+    app.setDelegate_(delegate)
+    AppHelper.runEventLoop()
