@@ -55,18 +55,20 @@ curl -X POST localhost:3001/api/config -d '{"mode":"thermostat"}'
 A future mobile app just calls these same endpoints (the server already binds
 `0.0.0.0:3001`, so it's reachable on the LAN).
 
-## Menu-bar widget (native)
+## Menu-bar widget (native SwiftUI)
 
-`menubar.py` is a **native AppKit** app (via PyObjC — no HTML): an `NSStatusItem`
-showing the room temp (+ ❄ when on), whose click opens an `NSPopover` built from
-real controls — a power button, a Manual/Auto/Cycle `NSSegmentedControl`, a
-target-temp `NSSlider`, and on/off `NSStepper`s with a live phase countdown in
-cycle mode. It reads/writes the same server, so it stays in sync with the webapp.
+The menu-bar app is a **native SwiftUI `MenuBarExtra`** under `macapp/` — a proper
+Swift app (Control-Center aesthetic: material tiles, SF Symbols, a power tile, a
+Manual/Auto/Cycle segmented picker, a target-temp slider, and cycle on/off
+steppers with a live countdown). It has no Python dependency; it talks to the
+same server over HTTP, so it stays in sync with the web dashboard.
 
 ```bash
-.venv/bin/pip install -r requirements-mac.txt   # fastapi/uvicorn/requests/pyobjc
-.venv/bin/python menubar.py                      # run once, foreground
+cd macapp && swift build -c release          # produces .build/release/SwitcherAC
+./.build/release/SwitcherAC                  # run once, foreground
 ```
+
+`daemon/install.sh` builds it and runs the binary as the menu-bar LaunchAgent.
 
 ## Run as a daemon (autostart + caffeinated)
 

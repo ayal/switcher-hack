@@ -150,3 +150,6 @@ esp32/secrets.h
 device.js
 test-socket.py
 test_scapy.py
+
+# Swift build artifacts
+macapp/.build/
