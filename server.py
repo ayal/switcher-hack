@@ -1,27 +1,71 @@
-"""FastAPI server for AC cloud control.
+"""FastAPI server for AC cloud control — the single backend for every client.
 
-Exposes HTTP endpoints that trigger Switcher cloud commands.
-Same endpoints the RPi had, but using cloud control (no LAN needed).
+This one process now runs BOTH the HTTP API and the control loop (as a
+background task), so the webapp, the macOS menubar app, and any future mobile
+app are all thin clients of the same API and always see the same state.
+
+Endpoints
+    Clean API (use these from new clients):
+        GET  /api/state              -> full state {mode, is_on, temperature, ...}
+        POST /api/config             <- partial config patch (validated/clamped)
+        GET  /control/on?temp&fan&mode , GET /control/off
+        GET  /temp                   -> fresh room temp straight from the cloud
+
+    Legacy (kept for the existing dashboard):
+        GET/POST /data , GET /history , GET /
 
 Usage:
-    python server.py                    # Start on port 3001
-    curl localhost:3001/control/on      # Turn AC on
-    curl localhost:3001/control/off     # Turn AC off
-    curl "localhost:3001/control/on?temp=22&fan=high"
+    python server.py                    # API + control loop on :3001
+    curl localhost:3001/api/state
+    curl -X POST localhost:3001/api/config -d '{"mode":"cycle","cycle_on_min":5}'
 """
 
+import asyncio
 import json
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, PlainTextResponse
-from fastapi import Request
+import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from cloud_control import cloud_control, cloud_get_state
+# aioswitcher lives under ./src (mirrors the PYTHONPATH=src the CLIs use).
+_SRC = Path(__file__).parent / "src"
+if _SRC.exists() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+
 from aioswitcher.device import DeviceState
+from cloud_control import cloud_control, cloud_get_state
+from auto_cloud import (
+    VALID_MODES,
+    load_data,
+    resolve_mode,
+    run_loop,
+    save_data,
+)
 
-app = FastAPI(title="Switcher AC Cloud Control")
+DATA_FILE = Path("webapp/static/data.json")
+HISTORY_CSV = Path("webapp/static/data.csv")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Spawn the control loop alongside the API, and cancel it on shutdown."""
+    task = asyncio.create_task(run_loop())
+    print("control loop started (in-process)")
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Switcher AC Cloud Control", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -33,12 +77,88 @@ async def add_cache_control_header(request: Request, call_next):
     return response
 
 
-# --- Live reading (fresh from the cloud, independent of the control loop) ---
+# ---------------------------------------------------------------------------
+# Clean JSON API (webapp / menubar / future mobile all use this)
+# ---------------------------------------------------------------------------
+
+def _current_state() -> Dict[str, Any]:
+    """The full stored state with `mode` normalized (migrates legacy `auto`)."""
+    d = load_data()
+    d["mode"] = resolve_mode(d)
+    d["auto"] = d["mode"] == "thermostat"  # keep the legacy mirror in sync
+    return d
+
+
+@app.get("/api/state")
+async def api_state():
+    """Everything a client needs to render, kept fresh by the control loop."""
+    return _current_state()
+
+
+# Validation/clamps for each configurable field. Anything not listed is ignored.
+def _clamp_int(v, lo, hi, default):
+    try:
+        return max(lo, min(hi, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp_num(v, lo, hi, default):
+    try:
+        return max(lo, min(hi, float(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+@app.post("/api/config")
+async def api_config(patch: Dict[str, Any]):
+    """Merge a partial, validated config patch into the stored state.
+
+    Accepts any subset of: mode, too_hot_temp, too_cold_temp, cool_temp,
+    poll_interval, cycle_on_min, cycle_off_min. Switching *into* cycle mode
+    re-anchors the timer to now, so it starts a fresh ON phase immediately.
+    """
+    d = load_data()
+    prev_mode = resolve_mode(d)
+
+    if "mode" in patch:
+        m = patch["mode"]
+        if m in VALID_MODES:
+            d["mode"] = m
+            d["auto"] = m == "thermostat"
+            if m == "cycle" and prev_mode != "cycle":
+                d["cycle_anchor"] = _now_iso()  # start cycling from ON, now
+    if "too_hot_temp" in patch:
+        d["too_hot_temp"] = _clamp_num(patch["too_hot_temp"], 10, 40, d.get("too_hot_temp", 27))
+    if "too_cold_temp" in patch:
+        d["too_cold_temp"] = _clamp_num(patch["too_cold_temp"], 10, 40, d.get("too_cold_temp", 26))
+    if "cool_temp" in patch:
+        d["cool_temp"] = _clamp_int(patch["cool_temp"], 16, 30, d.get("cool_temp", 26))
+    if "poll_interval" in patch:
+        d["poll_interval"] = _clamp_int(patch["poll_interval"], 10, 3600, d.get("poll_interval", 60))
+    if "cycle_on_min" in patch:
+        d["cycle_on_min"] = _clamp_num(patch["cycle_on_min"], 1, 240, d.get("cycle_on_min", 5))
+    if "cycle_off_min" in patch:
+        d["cycle_off_min"] = _clamp_num(patch["cycle_off_min"], 1, 240, d.get("cycle_off_min", 25))
+
+    save_data(d)
+    d["mode"] = resolve_mode(d)
+    return d
+
+
+def _now_iso() -> str:
+    # Local import keeps datetime out of the module top (and mirrors auto_cloud's
+    # naive-local timestamps used everywhere else in the app).
+    from datetime import datetime
+    return datetime.now().isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Live reading (fresh from the cloud, independent of the control loop)
+# ---------------------------------------------------------------------------
 
 @app.get("/temp")
 async def live_temp():
-    """Fetch the current room temp straight from the cloud on demand, so the
-    dashboard can show a near-live reading without waiting for the poll loop."""
     st = await cloud_get_state()
     if not st:
         return {"status": "error"}
@@ -50,7 +170,9 @@ async def live_temp():
     }
 
 
-# --- AC Control (cloud) ---
+# ---------------------------------------------------------------------------
+# AC control (cloud)
+# ---------------------------------------------------------------------------
 
 @app.get("/control/on")
 async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
@@ -64,7 +186,6 @@ async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
 
 @app.get("/control/off")
 async def turn_off():
-    """Turn AC off."""
     success = await cloud_control("off")
     if success:
         _patch_data({"is_on": False})
@@ -72,21 +193,16 @@ async def turn_off():
     return {"status": "error", "message": "cloud command failed"}
 
 
-# --- Data/dashboard (legacy, kept for compatibility) ---
-
-DATA_FILE = Path("webapp/static/data.json")
-HISTORY_CSV = Path("webapp/static/data.csv")
-
+# ---------------------------------------------------------------------------
+# Legacy data/dashboard endpoints
+# ---------------------------------------------------------------------------
 
 def _patch_data(patch: Dict[str, Any]) -> None:
     """Merge a partial update into data.json so the dashboard reflects manual
-    control immediately (the auto loop re-syncs from the broadcast next cycle)."""
-    try:
-        d = json.loads(DATA_FILE.read_text()) if DATA_FILE.exists() else {}
-    except Exception:
-        d = {}
+    control immediately (the loop re-syncs from the cloud next tick)."""
+    d = load_data()
     d.update(patch)
-    DATA_FILE.write_text(json.dumps(d, indent=4))
+    save_data(d)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -99,9 +215,7 @@ async def read_root():
 
 @app.get("/data")
 async def read_data():
-    if DATA_FILE.exists():
-        return json.loads(DATA_FILE.read_text())
-    return {}
+    return _current_state()
 
 
 @app.get("/history")
@@ -113,11 +227,11 @@ async def read_history():
 
 @app.post("/data")
 async def replace_data(new_data: Dict[str, Any]):
+    """Legacy full-state write. New clients should use POST /api/config."""
     DATA_FILE.write_text(json.dumps(new_data, indent=4))
     return new_data
 
 
-# Serve static files
 static_dir = Path("webapp/static")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

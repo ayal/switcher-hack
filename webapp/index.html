@@ -109,26 +109,30 @@
                 </div>
             </div>
 
-            <!-- Auto mode -->
+            <!-- Mode selector -->
             <div class="glass rounded-3xl p-5 flex flex-col justify-between">
                 <div class="flex items-center gap-2 text-slate-400 text-sm">
-                    <i data-lucide="bot" class="w-4 h-4"></i> Auto mode
+                    <i data-lucide="bot" class="w-4 h-4"></i> Mode
+                    <span class="ml-auto text-[11px] text-slate-500"
+                        x-text="state.mode === 'thermostat' ? 'temp-controlled' : (state.mode === 'cycle' ? 'timed on/off' : 'hands-on')"></span>
                 </div>
-                <label class="mt-3 inline-flex items-center justify-between cursor-pointer">
-                    <span class="text-sm text-slate-300" x-text="state.auto ? 'Thermostat enabled' : 'Manual only'"></span>
-                    <span class="relative">
-                        <input type="checkbox" class="sr-only peer" :checked="state.auto" @click="toggle('auto')">
-                        <span class="block w-12 h-7 rounded-full bg-slate-600 peer-checked:bg-sky-500 transition-colors"></span>
-                        <span class="absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform peer-checked:translate-x-5"></span>
-                    </span>
-                </label>
+                <div class="mt-3 grid grid-cols-3 gap-1 bg-white/5 rounded-2xl p-1">
+                    <template x-for="m in modes" :key="m.k">
+                        <button @click="setMode(m.k)"
+                            :class="state.mode === m.k ? 'bg-sky-500 text-white shadow' : 'text-slate-400 hover:bg-white/10'"
+                            class="px-2 py-2.5 rounded-xl text-xs font-semibold transition flex flex-col items-center gap-1">
+                            <i :data-lucide="m.icon" class="w-4 h-4"></i>
+                            <span x-text="m.label"></span>
+                        </button>
+                    </template>
+                </div>
             </div>
         </section>
 
         <!-- Controls -->
         <section class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            <!-- Limits -->
-            <div class="glass rounded-3xl p-5">
+            <!-- Limits (thermostat mode) -->
+            <div class="glass rounded-3xl p-5" x-show="state.mode === 'thermostat'" x-cloak>
                 <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
                     <i data-lucide="sliders-horizontal" class="w-4 h-4 text-sky-300"></i> Temperature limits
                 </h2>
@@ -156,6 +160,69 @@
                     </template>
                 </div>
                 <!-- Cooling setpoint (the AC target temperature used when it turns on) -->
+                <div class="mt-4 rounded-2xl bg-white/5 border border-white/5 p-4 flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                        <i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5 text-sky-300"></i>
+                        <span>Cooling setpoint <span class="text-slate-500">· AC target when on</span></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="setCool(-1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="minus" class="w-4 h-4"></i>
+                        </button>
+                        <div class="text-center min-w-[3.5rem]">
+                            <span class="text-3xl font-bold tabular-nums" x-text="fmt(state.cool_temp)"></span>
+                            <span class="text-slate-400 text-lg">°C</span>
+                        </div>
+                        <button @click="setCool(1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cycle timer (cycle mode) -->
+            <div class="glass rounded-3xl p-5" x-show="state.mode === 'cycle'" x-cloak>
+                <h2 class="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-4">
+                    <i data-lucide="timer" class="w-4 h-4 text-sky-300"></i> Cycle timer
+                    <span class="ml-auto text-[11px] text-slate-500">dumb on/off, no temp sensing</span>
+                </h2>
+                <!-- live phase + countdown -->
+                <div class="rounded-2xl bg-white/5 border border-white/5 p-4 flex items-center gap-3 mb-4">
+                    <span class="grid place-items-center w-11 h-11 rounded-2xl"
+                        :class="state.cycle_phase === 'on' ? 'bg-green-500/15 text-green-300' : 'bg-slate-500/15 text-slate-400'">
+                        <i data-lucide="snowflake" class="w-5 h-5" x-show="state.cycle_phase === 'on'"></i>
+                        <i data-lucide="power-off" class="w-5 h-5" x-show="state.cycle_phase !== 'on'"></i>
+                    </span>
+                    <div class="flex-1">
+                        <div class="text-lg font-bold leading-none" x-text="state.cycle_phase === 'on' ? 'Cooling' : 'Idle'"></div>
+                        <div class="text-xs text-slate-400 mt-1">
+                            switches in <span class="text-sky-300 font-medium tabular-nums" x-text="cyclePhaseStr"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <template x-for="c in [{k:'cycle_on_min',label:'On for',icon:'snowflake',color:'text-green-300'},{k:'cycle_off_min',label:'Off for',icon:'power-off',color:'text-slate-300'}]" :key="c.k">
+                        <div class="rounded-2xl bg-white/5 border border-white/5 p-4">
+                            <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                                <i :data-lucide="c.icon" class="w-3.5 h-3.5" :class="c.color"></i>
+                                <span x-text="c.label"></span>
+                            </div>
+                            <div class="mt-3 flex items-center justify-between gap-2">
+                                <button @click="cycleAdjust(c.k, -1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                                    <i data-lucide="minus" class="w-4 h-4"></i>
+                                </button>
+                                <div class="text-center">
+                                    <span class="text-3xl font-bold tabular-nums" x-text="fmt(state[c.k])"></span>
+                                    <span class="text-slate-400 text-sm">min</span>
+                                </div>
+                                <button @click="cycleAdjust(c.k, 1)" class="grid place-items-center w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition">
+                                    <i data-lucide="plus" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <!-- Cooling setpoint (shared: the AC target temperature used when it turns on) -->
                 <div class="mt-4 rounded-2xl bg-white/5 border border-white/5 p-4 flex items-center justify-between gap-2">
                     <div class="flex items-center gap-1.5 text-xs text-slate-400">
                         <i data-lucide="thermometer-snowflake" class="w-3.5 h-3.5 text-sky-300"></i>
@@ -204,7 +271,7 @@
         </section>
 
         <!-- Polling loop -->
-        <section class="glass rounded-3xl p-5 mb-4">
+        <section class="glass rounded-3xl p-5 mb-4" x-show="state.mode !== 'cycle'" x-cloak>
             <div class="flex flex-wrap items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
                     <span class="grid place-items-center w-11 h-11 rounded-2xl bg-sky-500/15 text-sky-300">
@@ -286,7 +353,7 @@
         </div>
     </div>
 
-    <script src="static/index.js?v=13" type="text/javascript"></script>
+    <script src="static/index.js?v=14" type="text/javascript"></script>
 </body>
 
 </html>

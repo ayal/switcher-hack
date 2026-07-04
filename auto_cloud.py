@@ -40,6 +40,63 @@ DEVICE_ID = os.environ.get("DEVICE_ID", "")  # from .env (gitignored)
 last_force_time = None
 force_cooldown_time = timedelta(minutes=5)
 
+# Operating modes the whole system understands (webapp, menubar, mobile all
+# just flip this one field in data.json):
+#   manual      — the loop only reads/records state; you drive the AC by hand
+#   thermostat  — the smart temp-monitoring loop (control_cycle) runs
+#   cycle        — dumb timer: X min ON then Y min OFF, forever
+VALID_MODES = ("manual", "thermostat", "cycle")
+
+# Cap the cycle-mode sleep so room-temp readings + the UI heartbeat stay fresh
+# even in the middle of a long OFF phase, and so a boundary is never missed by
+# more than this many seconds.
+CYCLE_REFRESH_CAP = 30
+
+
+# ---- shared data.json / CSV helpers ----
+def load_data():
+    """Read data.json, tolerating a missing/corrupt file."""
+    try:
+        with open(DATA_JSON_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_data(d):
+    try:
+        with open(DATA_JSON_PATH, "w") as f:
+            json.dump(d, f)
+    except Exception as e:
+        print("could not write data.json:", e)
+
+
+def append_csv(temp, state):
+    """Append one history row (the dashboard chart + trend logic read this)."""
+    try:
+        with open(CSV_FILE_PATH, "a") as f:
+            f.write(f"{datetime.now()}, {state == DeviceState.ON}, {temp}\n")
+    except Exception as e:
+        print("could not append CSV:", e)
+
+
+def parse_dt(s):
+    """Parse an ISO timestamp we wrote earlier; None on failure."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def resolve_mode(d):
+    """The active mode, migrating the legacy `auto` boolean when `mode` is unset."""
+    m = d.get("mode")
+    if m in VALID_MODES:
+        return m
+    return "thermostat" if d.get("auto") else "manual"
+
 
 def record_decision(action, reason, temp=None, state=None, target=None):
     """Append one decision to a rolling log (last 40) the dashboard displays.
@@ -235,9 +292,9 @@ async def control_cycle(dry=False):
     with open(DATA_JSON_PATH, "w") as f:
         json.dump(data_json, f)
 
-    if not data_json.get("auto", False):
-        print("Auto mode OFF — not changing anything.")
-        record_decision("auto-off", "auto mode off", the_temp, state, cur_target)
+    if resolve_mode(data_json) != "thermostat":
+        print("Thermostat mode not active — not changing anything.")
+        record_decision("auto-off", "thermostat off", the_temp, state, cur_target)
         return
 
     if not (should_change or should_force):
@@ -310,25 +367,134 @@ def update_poll_meta():
     return interval
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="Cloud-based AC thermostat loop")
-    parser.add_argument("--once", action="store_true", help="run one cycle then exit")
-    parser.add_argument("--dry", action="store_true", help="don't actually send AC commands")
-    args = parser.parse_args()
+# ---- cycle mode (the dumb timer, folded in from ac_cycle.sh) ----
+async def cycle_cycle(dry=False):
+    """One tick of the on/off timer. Returns the seconds to sleep before the
+    next tick (short, so boundaries are hit promptly and readings stay fresh).
 
-    print("starting cloud climate control...", "(dry run)" if args.dry else "")
-    if args.once:
-        await control_cycle(dry=args.dry)
-        return
+    The phase is derived from a wall-clock anchor, so it's restart-safe: killing
+    and relaunching the loop resumes the same on/off rhythm instead of jumping
+    back to the start of an ON phase.
+    """
+    d = load_data()
+    on_min = float(d.get("cycle_on_min", 5))
+    off_min = float(d.get("cycle_off_min", 25))
+    cool = int(d.get("cool_temp", 26))
+    on_sec = max(60, int(on_min * 60))       # floor at 1 min per phase
+    off_sec = max(60, int(off_min * 60))
+    period = on_sec + off_sec
+
+    now = datetime.now()
+    anchor = parse_dt(d.get("cycle_anchor"))
+    if anchor is None:
+        anchor = now
+        d["cycle_anchor"] = anchor.isoformat()
+
+    elapsed = max(0.0, (now - anchor).total_seconds())
+    pos = elapsed % period
+    if pos < on_sec:
+        desired, phase, secs_left = DeviceState.ON, "on", on_sec - pos
+    else:
+        desired, phase, secs_left = DeviceState.OFF, "off", period - pos
+
+    st = await cloud_get_state()
+    state = st["state"] if st else None
+    the_temp = st["temperature"] if st else None
+    cur_target = st["target_temperature"] if st else None
+
+    # record readings + history so the chart/UI stay alive in cycle mode too
+    if state is not None:
+        append_csv(the_temp, state)
+        d["is_on"] = state == DeviceState.ON
+        d["temperature"] = the_temp
+        d["ac_temp"] = cur_target
+    d["cycle_phase"] = phase
+    d["cycle_phase_until"] = (now + timedelta(seconds=secs_left)).isoformat()
+    d["last_poll"] = now.isoformat()
+    save_data(d)
+
+    print(f"\n--- cycle-mode tick {now} ---")
+    print(f"phase={phase} desired={desired} state={state} target={cur_target} "
+          f"cool={cool} secs_left={int(secs_left)}")
+
+    if st is None:
+        record_decision("offline", "no cloud state (cycle)")
+        return CYCLE_REFRESH_CAP
+
+    if not dry:
+        # Idempotency: only send on a real transition (the IR blaster beeps on
+        # every command, so never re-assert a state the device already holds).
+        if desired == DeviceState.ON and (state != DeviceState.ON or cur_target != cool):
+            await cloud_control("on", temp=cool, fan="low", mode="cool")
+            record_decision("on", f"cycle: {int(on_min)}m on @ {cool}°",
+                            the_temp, DeviceState.ON, cool)
+        elif desired == DeviceState.OFF and state != DeviceState.OFF:
+            await cloud_control("off")
+            record_decision("off", f"cycle: {int(off_min)}m off",
+                            the_temp, DeviceState.OFF, cur_target)
+
+    # Sleep to the phase boundary, but never longer than the refresh cap.
+    return max(1, min(CYCLE_REFRESH_CAP, int(secs_left)))
+
+
+# ---- manual mode: only observe (record readings, never control) ----
+async def refresh_readings():
+    d = load_data()
+    st = await cloud_get_state()
+    now = datetime.now()
+    if st:
+        append_csv(st["temperature"], st["state"])
+        d["is_on"] = st["state"] == DeviceState.ON
+        d["temperature"] = st["temperature"]
+        d["ac_temp"] = st["target_temperature"]
+    d["last_poll"] = now.isoformat()
+    d.pop("cycle_phase", None)
+    d.pop("cycle_phase_until", None)
+    save_data(d)
+
+
+# ---- one dispatched tick: routes to the active mode ----
+async def tick(dry=False):
+    """Run one control tick for the current mode. Returns the seconds to sleep
+    before the next tick, or None to fall back to the configured poll interval."""
+    mode = resolve_mode(load_data())
+    if mode == "cycle":
+        return await cycle_cycle(dry=dry)
+    if mode == "thermostat":
+        await control_cycle(dry=dry)
+        return None
+    await refresh_readings()  # manual
+    return None
+
+
+async def run_loop(dry=False):
+    """The single long-running controller loop (also spawned in-process by the
+    FastAPI server). Reads the mode fresh every tick, so switching modes from
+    any client takes effect on the next cycle."""
+    print("starting unified AC controller...", "(dry run)" if dry else "")
     while True:
+        sleep_s = None
         try:
-            await control_cycle(dry=args.dry)
+            sleep_s = await tick(dry=dry)
         except Exception as e:
             print(f"General Error: {e}")
             traceback.print_exc()
-        interval = update_poll_meta()
-        print(f"next poll in {interval}s")
-        await asyncio.sleep(interval)
+        if sleep_s is None:
+            sleep_s = update_poll_meta()  # thermostat/manual: stamp + poll_interval
+        print(f"next tick in {sleep_s}s")
+        await asyncio.sleep(sleep_s)
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="Unified cloud AC controller")
+    parser.add_argument("--once", action="store_true", help="run one tick then exit")
+    parser.add_argument("--dry", action="store_true", help="don't actually send AC commands")
+    args = parser.parse_args()
+
+    if args.once:
+        await tick(dry=args.dry)
+        return
+    await run_loop(dry=args.dry)
 
 
 if __name__ == "__main__":

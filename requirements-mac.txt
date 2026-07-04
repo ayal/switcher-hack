@@ -1,0 +1,10 @@
+# macOS runtime deps for the Switcher AC control app.
+# (aioswitcher is vendored under ./src and loaded via PYTHONPATH=src.)
+#
+# Install into the repo venv:
+#   .venv/bin/pip install -r requirements-mac.txt
+fastapi==0.128.8
+uvicorn==0.39.0
+python-dotenv==1.2.1
+requests==2.32.5
+rumps==0.4.0

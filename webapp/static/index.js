@@ -8,7 +8,7 @@
 
 function dashboard() {
     return {
-        state: { is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26, poll_interval: 60, last_poll: null },
+        state: { mode: 'manual', is_on: false, auto: false, temperature: 0, ac_temp: 0, too_hot_temp: 25, too_cold_temp: 23, cool_temp: 26, poll_interval: 60, last_poll: null, cycle_on_min: 5, cycle_off_min: 25, cycle_phase: null, cycle_phase_until: null },
         connected: false,
         lastUpdated: '',
         busy: false,
@@ -17,6 +17,7 @@ function dashboard() {
         now: Date.now(),
         tempFreshAt: 0,
         pollOptions: [{ s: 30, label: '30s' }, { s: 60, label: '1m' }, { s: 120, label: '2m' }, { s: 300, label: '5m' }],
+        modes: [{ k: 'manual', label: 'Manual', icon: 'hand' }, { k: 'thermostat', label: 'Auto', icon: 'bot' }, { k: 'cycle', label: 'Cycle', icon: 'timer' }],
         decisions: [],
         range: 24, // hours; 0 = all
         ranges: [{ n: 1, label: '1h' }, { n: 6, label: '6h' }, { n: 24, label: '24h' }, { n: 0, label: 'All' }],
@@ -61,7 +62,7 @@ function dashboard() {
 
         async fetchState() {
             try {
-                const res = await fetch('/data', { cache: 'no-store' });
+                const res = await fetch('/api/state', { cache: 'no-store' });
                 const data = await res.json();
                 if (data && Object.keys(data).length) {
                     // once /temp is driving the live reading, don't let the slower
@@ -95,24 +96,49 @@ function dashboard() {
             } catch (e) { /* fall back to data.json values */ }
         },
 
-        async postState() {
+        // Send a partial, validated config change to the backend; the server
+        // clamps + echoes the merged state, which we fold back in. This is the
+        // single write path shared by the webapp, menubar, and future clients.
+        async patchConfig(patch) {
+            // optimistic local update so the UI feels instant
+            this.state = { ...this.state, ...patch };
             try {
-                await fetch('/data', {
+                const res = await fetch('/api/config', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(this.state),
+                    body: JSON.stringify(patch),
                 });
+                const data = await res.json();
+                if (data && Object.keys(data).length) {
+                    if (this._liveTemp) { delete data.temperature; delete data.is_on; delete data.ac_temp; }
+                    this.state = { ...this.state, ...data };
+                }
                 this.refreshLimitLines();
-            } catch (e) { console.error('postState', e); }
+                this.$nextTick(() => this.icons());
+            } catch (e) { console.error('patchConfig', e); }
         },
 
-        toggle(key) { this.state[key] = !this.state[key]; this.postState(); },
-        increment(key) { this.state[key] = Math.round((Number(this.state[key]) + 0.5) * 2) / 2; this.postState(); },
-        decrement(key) { this.state[key] = Math.round((Number(this.state[key]) - 0.5) * 2) / 2; this.postState(); },
+        setMode(m) { this.patchConfig({ mode: m }); },
+        increment(key) { this.patchConfig({ [key]: Math.round((Number(this.state[key]) + 0.5) * 2) / 2 }); },
+        decrement(key) { this.patchConfig({ [key]: Math.round((Number(this.state[key]) - 0.5) * 2) / 2 }); },
         // cooling setpoint = the AC target temperature used when it turns on (integer, 16-30°C)
-        setCool(delta) { this.state.cool_temp = Math.min(30, Math.max(16, (Number(this.state.cool_temp) || 26) + delta)); this.postState(); },
+        setCool(delta) { this.patchConfig({ cool_temp: Math.min(30, Math.max(16, (Number(this.state.cool_temp) || 26) + delta)) }); },
+        // cycle on/off durations in minutes (1-240)
+        cycleAdjust(key, delta) {
+            const fallback = key === 'cycle_on_min' ? 5 : 25;
+            this.patchConfig({ [key]: Math.min(240, Math.max(1, (Number(this.state[key]) || fallback) + delta)) });
+        },
 
         // --- polling loop heartbeat ---
-        setPollInterval(sec) { this.state.poll_interval = sec; this.postState(); },
+        setPollInterval(sec) { this.patchConfig({ poll_interval: sec }); },
+
+        // --- cycle-mode phase countdown ---
+        get cyclePhaseStr() {
+            const t = this.parseTs(this.state.cycle_phase_until);
+            if (!isFinite(t)) return '—';
+            const rem = Math.max(0, Math.round((t - this.now) / 1000));
+            const m = Math.floor(rem / 60), s = rem % 60;
+            return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+        },
         get lastPollStr() {
             const t = this.parseTs(this.state.last_poll);
             if (!isFinite(t)) return '—';
