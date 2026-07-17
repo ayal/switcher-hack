@@ -283,16 +283,20 @@ async def control_cycle(dry=False):
     print(f"decide -> new_state={new_state}  ac_temp={turn_on_ac_temp}  fan=low")
     print(f"should_change={should_change} should_force={should_force} force_state={force_state}")
 
-    # log to CSV + data.json (drives the dashboard + the trend logic)
+    # Log to CSV + data.json (drives the dashboard + the trend logic). Re-read
+    # fresh here: `data_json` was loaded before the `await cloud_get_state()`
+    # above, so writing it back verbatim would silently clobber any
+    # concurrent /api/config change (mode switch, new setpoint, ...) made
+    # while this tick was awaiting the cloud.
     with open(CSV_FILE_PATH, "a") as f:
         f.write(f"{datetime.now()}, {state == DeviceState.ON}, {the_temp}\n")
-    data_json["is_on"] = state == DeviceState.ON
-    data_json["temperature"] = the_temp
-    data_json["ac_temp"] = cur_target
-    with open(DATA_JSON_PATH, "w") as f:
-        json.dump(data_json, f)
+    fresh = load_data()
+    fresh["is_on"] = state == DeviceState.ON
+    fresh["temperature"] = the_temp
+    fresh["ac_temp"] = cur_target
+    save_data(fresh)
 
-    if resolve_mode(data_json) != "thermostat":
+    if resolve_mode(fresh) != "thermostat":
         print("Thermostat mode not active — not changing anything.")
         record_decision("auto-off", "thermostat off", the_temp, state, cur_target)
         return
@@ -402,16 +406,22 @@ async def cycle_cycle(dry=False):
     the_temp = st["temperature"] if st else None
     cur_target = st["target_temperature"] if st else None
 
-    # record readings + history so the chart/UI stay alive in cycle mode too
+    # Re-read the freshest copy right before writing back: `d` was loaded
+    # before the `await cloud_get_state()` above, so a concurrent /api/config
+    # write (mode switch, new setpoint, ...) made during that await would
+    # otherwise be silently clobbered by this save.
+    fresh = load_data()
     if state is not None:
         append_csv(the_temp, state)
-        d["is_on"] = state == DeviceState.ON
-        d["temperature"] = the_temp
-        d["ac_temp"] = cur_target
-    d["cycle_phase"] = phase
-    d["cycle_phase_until"] = (now + timedelta(seconds=secs_left)).isoformat()
-    d["last_poll"] = now.isoformat()
-    save_data(d)
+        fresh["is_on"] = state == DeviceState.ON
+        fresh["temperature"] = the_temp
+        fresh["ac_temp"] = cur_target
+    fresh["cycle_phase"] = phase
+    fresh["cycle_phase_until"] = (now + timedelta(seconds=secs_left)).isoformat()
+    fresh["last_poll"] = now.isoformat()
+    if "cycle_anchor" not in fresh:
+        fresh["cycle_anchor"] = d["cycle_anchor"]
+    save_data(fresh)
 
     print(f"\n--- cycle-mode tick {now} ---")
     print(f"phase={phase} desired={desired} state={state} target={cur_target} "
@@ -439,9 +449,11 @@ async def cycle_cycle(dry=False):
 
 # ---- manual mode: only observe (record readings, never control) ----
 async def refresh_readings():
-    d = load_data()
+    # Load fresh *after* the await, not before: reading first and awaiting
+    # second is what let a concurrent /api/config write get clobbered on save.
     st = await cloud_get_state()
     now = datetime.now()
+    d = load_data()
     if st:
         append_csv(st["temperature"], st["state"])
         d["is_on"] = st["state"] == DeviceState.ON
