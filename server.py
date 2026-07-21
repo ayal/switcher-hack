@@ -115,11 +115,16 @@ async def api_config(patch: Dict[str, Any]):
     """Merge a partial, validated config patch into the stored state.
 
     Accepts any subset of: mode, too_hot_temp, too_cold_temp, cool_temp,
-    poll_interval, cycle_on_min, cycle_off_min. Switching *into* cycle mode
-    re-anchors the timer to now, so it starts a fresh ON phase immediately.
+    poll_interval, cycle_on_min, cycle_off_min. Switching *into* cycle mode,
+    or changing either cycle duration while already in cycle mode, re-anchors
+    the timer to now — otherwise the new durations get measured against the
+    old anchor and can land mid-phase (e.g. a fresh "15 on" applied at what
+    the old anchor considers 11 minutes in, so it flips to OFF 4 minutes
+    later instead of 15).
     """
     d = load_data()
     prev_mode = resolve_mode(d)
+    durations_changed = "cycle_on_min" in patch or "cycle_off_min" in patch
 
     if "mode" in patch:
         m = patch["mode"]
@@ -140,6 +145,9 @@ async def api_config(patch: Dict[str, Any]):
         d["cycle_on_min"] = _clamp_num(patch["cycle_on_min"], 1, 240, d.get("cycle_on_min", 5))
     if "cycle_off_min" in patch:
         d["cycle_off_min"] = _clamp_num(patch["cycle_off_min"], 1, 240, d.get("cycle_off_min", 25))
+
+    if durations_changed and resolve_mode(d) == "cycle":
+        d["cycle_anchor"] = _now_iso()  # start the new rhythm from ON, now
 
     save_data(d)
     d["mode"] = resolve_mode(d)
