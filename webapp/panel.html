@@ -156,6 +156,7 @@
   </div>
 
   <div class="foot" id="foot">—</div>
+  <div class="foot" id="ver" style="margin-top:2px; color:#3f4a6b;">build —</div>
 </div>
 
 <div id="toast"></div>
@@ -172,6 +173,11 @@
   async function checkVersion() {
     try {
       const { v } = await (await fetch('/panel/version', { cache: 'no-store' })).json();
+      if (v) {
+        const d = new Date(v * 1000), p = n => String(n).padStart(2, '0');
+        document.getElementById('ver').textContent =
+          `build ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      }
       if (BOOT_V === null) BOOT_V = v;
       else if (v && v !== BOOT_V) location.reload();
     } catch (e) { /* offline — ignore */ }
