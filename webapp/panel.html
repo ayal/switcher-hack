@@ -14,35 +14,61 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: radial-gradient(1200px 600px at 50% -10%, #16224a 0%, #0b1020 55%, #070b16 100%);
     color: #e8ecf6; display: flex; flex-direction: column; align-items: center;
-    padding: max(24px, env(safe-area-inset-top)) 18px calc(24px + env(safe-area-inset-bottom));
+    padding: max(22px, env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
   }
   .wrap { width: 100%; max-width: 460px; }
-  header { text-align: center; margin: 8px 0 22px; }
+  header { text-align: center; margin: 6px 0 18px; }
   h1 { font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: #8ea0c8; font-weight: 600; margin: 0; }
   .card {
     background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.02));
-    border: 1px solid rgba(255,255,255,.08); border-radius: 22px; padding: 24px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.4); margin-bottom: 18px;
+    border: 1px solid rgba(255,255,255,.08); border-radius: 22px; padding: 22px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.4); margin-bottom: 16px;
   }
   .temp { text-align: center; }
-  .temp .val { font-size: 66px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
-  .temp .val small { font-size: 26px; font-weight: 600; color: #8ea0c8; }
+  .temp .val { font-size: 60px; font-weight: 800; line-height: 1; letter-spacing: -.02em; }
+  .temp .val small { font-size: 24px; font-weight: 600; color: #8ea0c8; }
+  .temp .lbl { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #6f80a6; margin-bottom: 8px; }
   .pills { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
   .pill { font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.07); color: #b9c4de; }
   .pill.on  { background: rgba(52,199,120,.18); color: #7ff0b0; }
   .pill.off { background: rgba(255,99,99,.16);  color: #ff9d9d; }
+  .section-label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #6f80a6; margin: 2px 2px 9px; }
+
+  /* stepper */
+  .stepper { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .stepper.small { padding: 4px 0; }
+  .stepper .name { font-size: 15px; font-weight: 600; color: #cdd7ee; }
+  .stepper .name .u { font-size: 12px; color: #7f8db0; font-weight: 500; }
+  .stepbox { display: flex; align-items: center; gap: 14px; }
+  .rnd {
+    width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.06); color: #eef2fb; font-size: 24px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .06s, filter .15s;
+  }
+  .rnd:active { transform: scale(.9); filter: brightness(1.3); }
+  .stepval { font-size: 30px; font-weight: 800; min-width: 66px; text-align: center; }
+  .stepval small { font-size: 15px; color: #8ea0c8; font-weight: 600; }
+
+  /* segmented */
+  .seg { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; background: rgba(255,255,255,.04); padding: 5px; border-radius: 15px; border: 1px solid rgba(255,255,255,.07); }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: #a7b3d4; font-size: 14px; font-weight: 600;
+    padding: 11px 6px; border-radius: 11px; cursor: pointer; transition: background .15s, color .15s;
+  }
+  .seg button.active { background: linear-gradient(180deg, rgba(90,140,255,.4), rgba(90,140,255,.22)); color: #fff; box-shadow: 0 4px 14px rgba(60,110,255,.25); }
+
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   button.act {
     appearance: none; border: 1px solid rgba(255,255,255,.10); border-radius: 16px;
-    padding: 18px 12px; font-size: 16px; font-weight: 700; color: #eef2fb;
+    padding: 16px 12px; font-size: 16px; font-weight: 700; color: #eef2fb;
     background: rgba(255,255,255,.05); cursor: pointer; transition: transform .06s, filter .15s;
     display: flex; flex-direction: column; align-items: center; gap: 3px;
   }
-  button.act .sub { font-size: 11.5px; font-weight: 500; color: #93a1c4; letter-spacing: .01em; }
+  button.act .sub { font-size: 11.5px; font-weight: 500; color: #93a1c4; }
   button.act:active { transform: scale(.96); filter: brightness(1.15); }
   button.on  { background: linear-gradient(180deg, rgba(52,199,120,.28), rgba(52,199,120,.14)); border-color: rgba(52,199,120,.35); }
   button.off { background: linear-gradient(180deg, rgba(255,99,99,.26), rgba(255,99,99,.12)); border-color: rgba(255,99,99,.32); }
-  .section-label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #6f80a6; margin: 4px 2px 10px; }
+  .hidden { display: none !important; }
   #toast {
     position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
     padding: 12px 18px; border-radius: 12px; font-size: 14px; font-weight: 600;
@@ -51,8 +77,9 @@
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   #toast.err { background: #3a1620; border-color: rgba(255,99,99,.4); }
-  .nokey { text-align: center; font-size: 13px; color: #ffb27a; margin-top: -6px; margin-bottom: 14px; }
-  .foot { text-align: center; font-size: 11.5px; color: #56638a; margin-top: 6px; }
+  .nokey { text-align: center; font-size: 13px; color: #ffb27a; margin: -4px 0 14px; }
+  .foot { text-align: center; font-size: 11.5px; color: #56638a; margin-top: 4px; }
+  .divider { height: 1px; background: rgba(255,255,255,.07); margin: 16px 0; }
 </style>
 </head>
 <body>
@@ -61,27 +88,71 @@
 
   <div class="card">
     <div class="temp">
+      <div class="lbl">Room temperature</div>
       <div class="val" id="temp">--<small>°</small></div>
       <div class="pills">
         <span class="pill" id="power">—</span>
-        <span class="pill" id="mode">—</span>
-        <span class="pill" id="set">—</span>
+        <span class="pill" id="modepill">—</span>
       </div>
     </div>
   </div>
 
-  <div id="nokey" class="nokey" hidden>⚠︎ No key in URL — controls disabled. Open with <code>?key=…</code></div>
+  <div id="nokey" class="nokey hidden">⚠︎ No key in URL — controls disabled. Open with <code>?key=…</code></div>
 
-  <div class="section-label">Power</div>
-  <div class="grid" style="margin-bottom:18px">
-    <button class="act on"  onclick="go('/ac/on','On')"><span>On</span><span class="sub">manual · 25°</span></button>
-    <button class="act off" onclick="go('/ac/off','Off')"><span>Off</span><span class="sub">manual</span></button>
+  <!-- target temperature -->
+  <div class="card">
+    <div class="stepper">
+      <div class="name">Target temp</div>
+      <div class="stepbox">
+        <div class="rnd" onclick="bumpTemp(-1)">−</div>
+        <div class="stepval"><span id="settemp">--</span><small>°</small></div>
+        <div class="rnd" onclick="bumpTemp(1)">+</div>
+      </div>
+    </div>
   </div>
 
-  <div class="section-label">Cycle presets</div>
+  <!-- mode -->
+  <div class="section-label">Mode</div>
+  <div class="seg" id="seg">
+    <button data-mode="manual"     onclick="setMode('manual')">Manual</button>
+    <button data-mode="thermostat" onclick="setMode('thermostat')">Thermostat</button>
+    <button data-mode="cycle"      onclick="setMode('cycle')">Cycle</button>
+  </div>
+
+  <!-- power -->
+  <div class="section-label" style="margin-top:16px">Power</div>
   <div class="grid">
-    <button class="act" onclick="go('/ac/cycle?on=6&off=15&temp=25','Night')"><span>🌙 Night</span><span class="sub">25° · 6 on / 15 off</span></button>
-    <button class="act" onclick="go('/ac/cycle?on=15&off=10&temp=24','Noon')"><span>☀️ Noon</span><span class="sub">24° · 15 on / 10 off</span></button>
+    <button class="act on"  onclick="power('on')"><span>On</span><span class="sub" id="onsub">manual · 25°</span></button>
+    <button class="act off" onclick="power('off')"><span>Off</span><span class="sub">manual</span></button>
+  </div>
+
+  <!-- cycle params (only in cycle mode) -->
+  <div class="card hidden" id="cyclecard" style="margin-top:16px">
+    <div class="section-label" style="margin:0 0 12px">Cycle timing</div>
+    <div class="stepper small">
+      <div class="name">On <span class="u">minutes</span></div>
+      <div class="stepbox">
+        <div class="rnd" onclick="bumpCycle('on',-1)">−</div>
+        <div class="stepval"><span id="onmin">--</span></div>
+        <div class="rnd" onclick="bumpCycle('on',1)">+</div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="stepper small">
+      <div class="name">Off <span class="u">minutes</span></div>
+      <div class="stepbox">
+        <div class="rnd" onclick="bumpCycle('off',-1)">−</div>
+        <div class="stepval"><span id="offmin">--</span></div>
+        <div class="rnd" onclick="bumpCycle('off',1)">+</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- presets -->
+  <div class="section-label" style="margin-top:16px">Cycle presets</div>
+  <div class="grid">
+    <button class="act" onclick="preset('/ac/cycle?on=6&off=15&temp=25','Night')"><span>🌙 Night</span><span class="sub">25° · 6 on / 15 off</span></button>
+    <button class="act" onclick="preset('/ac/cycle?on=15&off=10&temp=24','Noon')"><span>☀️ Noon</span><span class="sub">24° · 15 on / 10 off</span></button>
   </div>
 
   <div class="foot" id="foot">—</div>
@@ -91,7 +162,9 @@
 
 <script>
   const KEY = new URLSearchParams(location.search).get('key') || '';
-  if (!KEY) document.getElementById('nokey').hidden = false;
+  if (!KEY) document.getElementById('nokey').classList.remove('hidden');
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  let state = { mode: null, is_on: false, cool_temp: 24, cycle_on_min: 15, cycle_off_min: 10, temperature: null };
 
   function toast(msg, err) {
     const t = document.getElementById('toast');
@@ -99,32 +172,69 @@
     clearTimeout(t._h); t._h = setTimeout(() => t.className = '', 1900);
   }
 
-  async function go(path, label) {
-    if (!KEY) { toast('No key — open panel with ?key=…', true); return; }
+  // Fire a token-guarded GET; `path` may already include query params.
+  async function call(path, label) {
+    if (!KEY) { toast('No key — open panel with ?key=…', true); return null; }
     const sep = path.includes('?') ? '&' : '?';
     try {
       const r = await fetch(path + sep + 'key=' + encodeURIComponent(KEY));
-      if (r.status === 403) { toast('Wrong key — forbidden', true); return; }
+      if (r.status === 403) { toast('Wrong key — forbidden', true); return null; }
       const j = await r.json();
-      if (j.status === 'ok') { toast('✓ ' + label); refresh(); }
-      else toast(label + ' failed: ' + (j.message || 'error'), true);
-    } catch (e) { toast('Network error', true); }
+      if (j.status === 'ok') { if (label) toast('✓ ' + label); refresh(); return j; }
+      toast((label || 'action') + ' failed', true); return null;
+    } catch (e) { toast('Network error', true); return null; }
+  }
+
+  const power  = (which) => call('/ac/' + which, which === 'on' ? 'On' : 'Off');
+  const preset = (path, label) => call(path, label);
+  const setMode = (m) => call('/ac/config?mode=' + m, m[0].toUpperCase() + m.slice(1));
+
+  function bumpTemp(delta) {
+    const t = clamp((state.cool_temp || 24) + delta, 16, 30);
+    // In manual + on, re-issue /ac/on so the unit changes immediately;
+    // otherwise just store the target (applies per mode).
+    if (state.mode === 'manual' && state.is_on) call('/ac/on?temp=' + t, 'Set ' + t + '°');
+    else call('/ac/config?cool_temp=' + t, 'Set ' + t + '°');
+  }
+
+  function bumpCycle(which, delta) {
+    if (which === 'on') {
+      const v = clamp((state.cycle_on_min || 15) + delta, 1, 240);
+      call('/ac/config?cycle_on_min=' + v, 'On ' + v + 'm');
+    } else {
+      const v = clamp((state.cycle_off_min || 10) + delta, 1, 240);
+      call('/ac/config?cycle_off_min=' + v, 'Off ' + v + 'm');
+    }
+  }
+
+  function render() {
+    const s = state;
+    document.getElementById('temp').innerHTML =
+      (s.temperature != null ? Number(s.temperature).toFixed(1) : '--') + '<small>°</small>';
+    const p = document.getElementById('power');
+    p.textContent = s.is_on ? 'ON' : 'OFF'; p.className = 'pill ' + (s.is_on ? 'on' : 'off');
+    document.getElementById('modepill').textContent = s.mode || '—';
+    document.getElementById('settemp').textContent = s.cool_temp ?? '--';
+    document.getElementById('onsub').textContent = 'manual · ' + (s.cool_temp ?? 25) + '°';
+    // mode segmented highlight
+    document.querySelectorAll('#seg button').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === s.mode));
+    // cycle card visibility + values
+    const cyc = s.mode === 'cycle';
+    document.getElementById('cyclecard').classList.toggle('hidden', !cyc);
+    document.getElementById('onmin').textContent = s.cycle_on_min ?? '--';
+    document.getElementById('offmin').textContent = s.cycle_off_min ?? '--';
+    let foot = cyc
+      ? 'cycle ' + s.cycle_on_min + ' on / ' + s.cycle_off_min + ' off @ ' + s.cool_temp + '°'
+      : (s.last_poll ? 'last poll ' + s.last_poll.replace('T', ' ').slice(0, 19) : '—');
+    document.getElementById('foot').textContent = foot;
   }
 
   async function refresh() {
     try {
       const s = await (await fetch('/api/state')).json();
-      document.getElementById('temp').innerHTML =
-        (s.temperature != null ? Number(s.temperature).toFixed(1) : '--') + '<small>°</small>';
-      const on = s.is_on;
-      const p = document.getElementById('power');
-      p.textContent = on ? 'ON' : 'OFF'; p.className = 'pill ' + (on ? 'on' : 'off');
-      document.getElementById('mode').textContent = 'mode: ' + (s.mode || '—');
-      document.getElementById('set').textContent = 'set ' + (s.ac_temp ?? '—') + '°';
-      let foot = '';
-      if (s.mode === 'cycle') foot = 'cycle ' + s.cycle_on_min + ' on / ' + s.cycle_off_min + ' off @ ' + s.cool_temp + '°';
-      else foot = 'last poll ' + (s.last_poll ? s.last_poll.replace('T', ' ').slice(0, 19) : '—');
-      document.getElementById('foot').textContent = foot;
+      state = Object.assign(state, s);
+      render();
     } catch (e) { /* keep last */ }
   }
 

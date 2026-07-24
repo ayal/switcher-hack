@@ -26,7 +26,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # aioswitcher lives under ./src (mirrors the PYTHONPATH=src the CLIs use).
 _SRC = Path(__file__).parent / "src"
@@ -263,6 +263,40 @@ async def ac_cycle(key: str = "", on: float = 15, off: float = 10, temp: int = 2
         "cycle_on_min": d.get("cycle_on_min"),
         "cycle_off_min": d.get("cycle_off_min"),
         "cool_temp": d.get("cool_temp"),
+    }
+
+
+@app.get("/ac/config")
+async def ac_config_get(
+    key: str = "",
+    mode: Optional[str] = None,
+    cool_temp: Optional[int] = None,
+    cycle_on_min: Optional[float] = None,
+    cycle_off_min: Optional[float] = None,
+    poll_interval: Optional[int] = None,
+):
+    """Granular config for the web panel (token-guarded, GET). Applies any
+    provided field via the shared patch. Does not toggle power — use /ac/on|off
+    for that (or re-call /ac/on to apply a new temp immediately in manual mode)."""
+    _require_token(key)
+    patch: Dict[str, Any] = {}
+    for name, val in (
+        ("mode", mode),
+        ("cool_temp", cool_temp),
+        ("cycle_on_min", cycle_on_min),
+        ("cycle_off_min", cycle_off_min),
+        ("poll_interval", poll_interval),
+    ):
+        if val is not None:
+            patch[name] = val
+    d = _apply_config_patch(patch)
+    return {
+        "status": "ok",
+        "mode": d.get("mode"),
+        "cool_temp": d.get("cool_temp"),
+        "cycle_on_min": d.get("cycle_on_min"),
+        "cycle_off_min": d.get("cycle_off_min"),
+        "is_on": d.get("is_on"),
     }
 
 
