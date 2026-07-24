@@ -166,6 +166,17 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   let state = { mode: null, is_on: false, cool_temp: 24, cycle_on_min: 15, cycle_off_min: 10, temperature: null };
 
+  // Auto-update: reload the page when a newer panel is deployed, so the
+  // home-screen web app never gets stuck on an old version.
+  let BOOT_V = null;
+  async function checkVersion() {
+    try {
+      const { v } = await (await fetch('/panel/version', { cache: 'no-store' })).json();
+      if (BOOT_V === null) BOOT_V = v;
+      else if (v && v !== BOOT_V) location.reload();
+    } catch (e) { /* offline — ignore */ }
+  }
+
   function toast(msg, err) {
     const t = document.getElementById('toast');
     t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
@@ -239,7 +250,11 @@
   }
 
   refresh();
+  checkVersion();
   setInterval(refresh, 5000);
+  setInterval(checkVersion, 6000);
+  // Also re-check the moment the web app comes back to the foreground.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); checkVersion(); } });
 </script>
 </body>
 </html>

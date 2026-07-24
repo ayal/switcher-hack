@@ -320,6 +320,17 @@ async def read_root():
     return "<h1>Switcher AC Control</h1><p><a href='/control/on'>ON</a> | <a href='/control/off'>OFF</a></p>"
 
 
+@app.get("/panel/version")
+async def panel_version():
+    """Build stamp (panel.html mtime) so an open panel can auto-reload itself
+    when a new version is deployed — no need to re-add the home-screen icon."""
+    try:
+        v = int(Path("webapp/panel.html").stat().st_mtime)
+    except OSError:
+        v = 0
+    return {"v": v}
+
+
 @app.get("/panel", response_class=HTMLResponse)
 async def control_panel():
     """Lightweight self-contained mobile control panel with On/Off + cycle
