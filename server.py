@@ -22,17 +22,18 @@ Usage:
 
 import asyncio
 import json
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # aioswitcher lives under ./src (mirrors the PYTHONPATH=src the CLIs use).
 _SRC = Path(__file__).parent / "src"
 if _SRC.exists() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -66,6 +67,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Switcher AC Cloud Control", lifespan=lifespan)
+
+# Optional shared-secret guard for state-changing endpoints. When CONTROL_TOKEN
+# is set (in .env), callers must pass ?key=<token>; otherwise requests are open.
+CONTROL_TOKEN = os.environ.get("CONTROL_TOKEN", "")
+
+
+def _require_token(key: str) -> None:
+    if CONTROL_TOKEN and key != CONTROL_TOKEN:
+        raise HTTPException(status_code=403, detail="forbidden")
 
 
 @app.middleware("http")
@@ -110,8 +120,7 @@ def _clamp_num(v, lo, hi, default):
         return default
 
 
-@app.post("/api/config")
-async def api_config(patch: Dict[str, Any]):
+def _apply_config_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
     """Merge a partial, validated config patch into the stored state.
 
     Accepts any subset of: mode, too_hot_temp, too_cold_temp, cool_temp,
@@ -154,6 +163,12 @@ async def api_config(patch: Dict[str, Any]):
     return d
 
 
+@app.post("/api/config")
+async def api_config(patch: Dict[str, Any]):
+    """Merge a partial config patch (used by the dashboard and other clients)."""
+    return _apply_config_patch(patch)
+
+
 def _now_iso() -> str:
     # Local import keeps datetime out of the module top (and mirrors auto_cloud's
     # naive-local timestamps used everywhere else in the app).
@@ -183,8 +198,9 @@ async def live_temp():
 # ---------------------------------------------------------------------------
 
 @app.get("/control/on")
-async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
-    """Turn AC on. Optional: ?temp=22&fan=high&mode=cool"""
+async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool", key: str = ""):
+    """Turn AC on. Optional: ?temp=22&fan=high&mode=cool (&key=<token> if set)"""
+    _require_token(key)
     success = await cloud_control("on", temp=temp, fan=fan, mode=mode)
     if success:
         _patch_data({"is_on": True, "ac_temp": temp})
@@ -193,12 +209,95 @@ async def turn_on(temp: int = 24, fan: str = "medium", mode: str = "cool"):
 
 
 @app.get("/control/off")
-async def turn_off():
+async def turn_off(key: str = ""):
+    _require_token(key)
     success = await cloud_control("off")
     if success:
         _patch_data({"is_on": False})
         return {"status": "ok", "action": "off"}
     return {"status": "error", "message": "cloud command failed"}
+
+
+# ---------------------------------------------------------------------------
+# Shortcut endpoints — combine a mode switch with a control action so a manual
+# on/off "sticks" (in manual mode the loop only observes, never overrides).
+# Token-guarded, GET-friendly for Apple Shortcuts.
+# ---------------------------------------------------------------------------
+
+@app.get("/ac/on")
+async def ac_on(key: str = "", temp: int = 25, fan: str = "low", mode: str = "cool"):
+    """Switch to manual + turn AC on (default 25°C). e.g. /ac/on?key=..&temp=22"""
+    _require_token(key)
+    _apply_config_patch({"mode": "manual", "cool_temp": temp})
+    success = await cloud_control("on", temp=temp, fan=fan, mode=mode)
+    if success:
+        _patch_data({"is_on": True, "ac_temp": temp})
+        return {"status": "ok", "action": "on", "mode": "manual", "temp": temp}
+    return {"status": "error", "message": "cloud command failed"}
+
+
+@app.get("/ac/off")
+async def ac_off(key: str = ""):
+    """Switch to manual + turn AC off."""
+    _require_token(key)
+    _apply_config_patch({"mode": "manual"})
+    success = await cloud_control("off")
+    if success:
+        _patch_data({"is_on": False})
+        return {"status": "ok", "action": "off", "mode": "manual"}
+    return {"status": "error", "message": "cloud command failed"}
+
+
+@app.get("/ac/cycle")
+async def ac_cycle(key: str = "", on: float = 15, off: float = 10, temp: int = 26):
+    """Switch to cycle mode with defaults (15 on / 10 off / 26°C), all
+    overridable: /ac/cycle?key=..&on=20&off=8&temp=24. The loop then drives the
+    AC on/off on this rhythm (re-anchored to ON now)."""
+    _require_token(key)
+    d = _apply_config_patch(
+        {"mode": "cycle", "cycle_on_min": on, "cycle_off_min": off, "cool_temp": temp}
+    )
+    return {
+        "status": "ok",
+        "mode": d.get("mode"),
+        "cycle_on_min": d.get("cycle_on_min"),
+        "cycle_off_min": d.get("cycle_off_min"),
+        "cool_temp": d.get("cool_temp"),
+    }
+
+
+@app.get("/ac/config")
+async def ac_config_get(
+    key: str = "",
+    mode: Optional[str] = None,
+    cool_temp: Optional[int] = None,
+    cycle_on_min: Optional[float] = None,
+    cycle_off_min: Optional[float] = None,
+    poll_interval: Optional[int] = None,
+):
+    """Granular config for the web panel (token-guarded, GET). Applies any
+    provided field via the shared patch. Does not toggle power — use /ac/on|off
+    for that (or re-call /ac/on to apply a new temp immediately in manual mode)."""
+    _require_token(key)
+    patch: Dict[str, Any] = {}
+    for name, val in (
+        ("mode", mode),
+        ("cool_temp", cool_temp),
+        ("cycle_on_min", cycle_on_min),
+        ("cycle_off_min", cycle_off_min),
+        ("poll_interval", poll_interval),
+    ):
+        if val is not None:
+            patch[name] = val
+    d = _apply_config_patch(patch)
+    return {
+        "status": "ok",
+        "mode": d.get("mode"),
+        "cool_temp": d.get("cool_temp"),
+        "cycle_on_min": d.get("cycle_on_min"),
+        "cycle_off_min": d.get("cycle_off_min"),
+        "is_on": d.get("is_on"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +318,28 @@ async def read_root():
     if index.exists():
         return index.read_text()
     return "<h1>Switcher AC Control</h1><p><a href='/control/on'>ON</a> | <a href='/control/off'>OFF</a></p>"
+
+
+@app.get("/panel/version")
+async def panel_version():
+    """Build stamp (panel.html mtime) so an open panel can auto-reload itself
+    when a new version is deployed — no need to re-add the home-screen icon."""
+    try:
+        v = int(Path("webapp/panel.html").stat().st_mtime)
+    except OSError:
+        v = 0
+    return {"v": v}
+
+
+@app.get("/panel", response_class=HTMLResponse)
+async def control_panel():
+    """Lightweight self-contained mobile control panel with On/Off + cycle
+    presets. Reads the token from its own URL (?key=...) so the secret lives in
+    the bookmark, not in publicly-served HTML."""
+    panel = Path("webapp/panel.html")
+    if panel.exists():
+        return panel.read_text()
+    return HTMLResponse("<h1>panel.html missing</h1>", status_code=404)
 
 
 @app.get("/data")
